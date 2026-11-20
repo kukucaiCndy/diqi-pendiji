@@ -154,21 +154,8 @@ fun HerRhythmNavHost(
                     )
                 }
                 composable(Routes.PROFILE) {
-                    PlaceholderScreen(
-                        title = "我的",
-                        message = "语音速度、提醒、隐私说明与演示模式开关，会在设置页实现时完成。",
-                        tag = "profile.root",
-                        extra = if (com.diqi.demo.BuildConfig.DEBUG) {
-                            {
-                                HrSecondaryButton(
-                                    text = "设备自检（仅 debug）",
-                                    tag = "profile.dev_entry",
-                                    onClick = { navController.navigate(Routes.DEV_DESIGN) },
-                                )
-                            }
-                        } else {
-                            null
-                        },
+                    com.diqi.demo.ui.screens.settings.SettingsScreen(
+                        onOpenDesignSystem = { navController.navigate(Routes.DEV_DESIGN) },
                     )
                 }
 
@@ -225,10 +212,8 @@ fun HerRhythmNavHost(
                     )
                 }
                 composable(Routes.WEEKLY_REPORT) {
-                    PlaceholderScreen(
-                        title = "家人周报",
-                        message = "只含本周完成天数与累计时长，先预览再分享。",
-                        tag = "weekly.root",
+                    com.diqi.demo.ui.screens.weekly.WeeklyReportScreen(
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Routes.LEAK_DIARY) {
