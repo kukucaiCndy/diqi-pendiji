@@ -64,6 +64,14 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
+    androidResources {
+        // 语音素材必须**不压缩**：MediaPlayer 用 AssetFileDescriptor 打开，
+        // 被 zip 压缩过的资产会抛
+        // "This file can not be opened as a file descriptor; it is probably compressed"
+        // —— 而且这个错只在运行时暴露，构建期不会报。
+        noCompress += listOf("m4a")
+    }
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
         // 让 android.jar 的桩方法返回默认值而不是抛异常。

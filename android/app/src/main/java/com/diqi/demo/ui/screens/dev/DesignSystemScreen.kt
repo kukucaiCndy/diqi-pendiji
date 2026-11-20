@@ -152,6 +152,13 @@ fun DesignSystemScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.testTag("dev.design_system.touch_target"),
         )
 
+        // 语音自检区：仅 debug 构建渲染。语音是唯一无法靠文字检索验收的通道，
+        // 需要真机点击 + dumpsys audio / logcat 证据。
+        if (com.diqi.demo.BuildConfig.DEBUG) {
+            Spacer(Modifier.height(HrSpacing.xl))
+            VoiceCheckSection()
+        }
+
         Spacer(Modifier.height(HrSpacing.xxl))
     }
 }

@@ -7,7 +7,15 @@ import com.diqi.demo.data.db.HerRhythmDb
 import com.diqi.demo.data.prefs.AppSettingsStore
 import com.diqi.demo.data.repo.LeakDiaryRepository
 import com.diqi.demo.data.repo.ProgressRepository
+import com.diqi.demo.audio.AssetVoiceGuide
+import com.diqi.demo.audio.VoiceGuide
+import com.diqi.demo.data.prefs.DataStoreSnapshotStore
+import com.diqi.demo.data.prefs.SnapshotStore
 import com.diqi.demo.data.repo.SessionRepository
+import com.diqi.demo.domain.training.TrainingEngine
+import com.diqi.demo.domain.training.TrainingParams
+import com.diqi.demo.training.TrainingSessionCoordinator
+import kotlinx.coroutines.CoroutineScope
 
 /**
  * 手写依赖容器（决策 D7：不引入 Hilt）。
@@ -53,4 +61,35 @@ class AppContainer(private val app: Application) {
     val progressRepository: ProgressRepository by lazy { ProgressRepository(database) }
 
     val leakDiaryRepository: LeakDiaryRepository by lazy { LeakDiaryRepository(database) }
+
+    val snapshotStore: SnapshotStore by lazy { DataStoreSnapshotStore(app) }
+
+    /**
+     * 语音播放器。
+     *
+     * app-scoped 而不是页面级：训练中页面可能重建（旋转禁止但配置变化仍可能），
+     * 播放器跟着页面重建会打断正在播的句子。播完会主动归还音频焦点，
+     * 所以长期持有是安全的。
+     */
+    val voiceGuide: VoiceGuide by lazy { AssetVoiceGuide(app) }
+
+    /**
+     * 为一次训练新建协调器。
+     *
+     * **每次训练必须是新实例**：引擎内部持有本场的起点与暂停累计，
+     * 复用会把上一场的时间带进来。
+     *
+     * @param scope 生命周期归属方（训练页 ViewModel 或前台服务）的 scope
+     */
+    fun newTrainingSession(
+        scope: CoroutineScope,
+        params: TrainingParams = TrainingParams.DEFAULT,
+    ): TrainingSessionCoordinator = TrainingSessionCoordinator(
+        engine = TrainingEngine(clock, params),
+        clock = clock,
+        voice = voiceGuide,
+        snapshots = snapshotStore,
+        scope = scope,
+        params = params,
+    )
 }

@@ -201,24 +201,36 @@ data class TrainingFrame(
     }
 }
 
-/** 中断恢复快照（AC-13）。 */
+/**
+ * 中断恢复快照（AC-13）。
+ *
+ * ## 为什么只存相对量
+ *
+ * [elapsedActiveMs] 是"快照时已用的活动时长"，而不是单调时钟的绝对起点。
+ * 进程被杀后 `SystemClock.elapsedRealtime()` 会归零，若存绝对值，
+ * 恢复后算出的已用时长会是负数（评审指出的真实坑）。
+ * 恢复时用 `now - elapsedActiveMs` 倒推起点即可。
+ */
 data class EngineSnapshot(
-    val startedAtMs: Long,
+    /** 训练开始的墙钟时间，仅用于写库的 startedAt */
+    val startedAtWallMs: Long,
     val accumulatedPausedMs: Long,
     val pauseCount: Int,
     val planVersion: String,
     val plannedReps: Int,
-    /** 快照时的已过毫秒（不含暂停），用于丢弃前判断是否值得恢复 */
+    /** 快照时的已用活动时长（不含暂停）*/
     val elapsedActiveMs: Long,
+    /** 快照时是否处于暂停状态 */
+    val wasPaused: Boolean,
 ) {
     /** 是否值得提示"继续/丢弃"：至少开始了 3 秒且没跑完 */
-    companion object {
-        const val MIN_RESUMABLE_MS = 3_000L
-    }
-
     fun isResumable(params: TrainingParams): Boolean =
         elapsedActiveMs >= MIN_RESUMABLE_MS &&
             elapsedActiveMs < params.totalActiveMs - 1_000L
+
+    companion object {
+        const val MIN_RESUMABLE_MS = 3_000L
+    }
 }
 
 /** 秒数向上取整的小工具，避免 UI 各自 ceil。 */

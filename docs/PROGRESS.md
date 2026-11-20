@@ -159,3 +159,56 @@
 - **`QualityGate`（质量四态判定）尚不存在**，所有 `validRatio`/`lastState` 目前只有种子与测试写入，真实生产者待 S6。
 - **所有筛查派生属性与 `shareEnabled` 目前零消费者** —— FR-01 的常驻提示条、完成页结论抑制、FR-13 分享守卫会在 S4/S8 接上，届时必须重审。
 - **`ProgressRepository`/`LeakDiaryRepository` 尚无 UI 调用方**，其端到端表现（AC-12/23）在 S7 才能真验。
+
+---
+
+## S3 · 训练引擎（纯函数计时）+ 语音素材 ✅ 完成
+
+### 交付物
+
+| 类别 | 内容 |
+| --- | --- |
+| 时间线 | `TrainingTimeline`：`elapsedActiveMs → TrainingFrame` 的**纯函数**，无 tick 累加（D11） |
+| 引擎 | `TrainingEngine`：时钟注入、暂停/恢复/结束、**结束后冻结时间**、快照恢复 |
+| 协调器 | `TrainingSessionCoordinator`：引擎 + 语音 + 快照的唯一生产接入点，100ms tick 只驱动重绘 |
+| 快照 | `SnapshotStore` 接口 + `DataStoreSnapshotStore`（独立 DataStore 文件） |
+| 语音 | `VoiceScript`（8 条文案唯一来源）+ `gen-voice.sh`（macOS 中文语音 → AAC）+ `AssetVoiceGuide`（`prepareAsync` + 音频焦点管理） |
+
+### 端到端证据
+
+| 项 | 结果 |
+| --- | --- |
+| 单测 | ✅ **125 项 / 0 失败**（app 110 + facephys-api 15） |
+| 真机音频 | ✅ `requestAudioFocus from AssetVoiceGuide`、`MediaPlayer state:started`、`NuPlayerDecoderBase: audioStart latency 55.14 ms` |
+| 音频素材 | ✅ 8 条 m4a 共约 312KB；`noCompress` 生效（`openFd` 成功，无 "file can not be opened as a file descriptor"） |
+| 播完归还焦点 | ✅ 播放结束后 `dumpsys audio` 无 active speech player |
+| lint | ✅ 0 error |
+| 禁词扫描 | ✅ 0 命中（含语音文案） |
+
+### CodeReview（2 路编排）发现与处置
+
+| # | 问题 | 级别 | 处置 |
+| --- | --- | --- | --- |
+| 1 | **`stop()` 只置标志位不冻结时间** → 之后每次 poll 都会重算 elapsed，越过总时长后 `completedReps` 从 2 变 8 —— 正是 AC-07 要防的补造 | 高 | 增 `frozenElapsedMs`，`stop()` 记录冻结值，`elapsedActiveMs` 优先返回它；加 3 条回归测试 |
+| 2 | `restore()` 不回填 `startedAtWallMs` → 再次 `snapshot()` 得 0 → 写库命中 `require(startedAt >= MIN_EPOCH_MS)` 直接崩（AC-13「继续」路径） | 高 | 回填墙钟；历史暂停时长放进独立 `restoredPausedMs` 避免被重复扣减；加 2 条测试 |
+| 3 | `pause()` 在自然完成后仍会执行 → 状态从 COMPLETE 变回 PAUSED，且多记一次 `pauseCount`（§5.3 状态机 Complete 无"暂停"去向） | 中 | 入口加完成判定；`status` getter 也补齐"自然完成"分支 |
+| 4 | `TrainingTimeline.frameAt` 的 `status` 形参只在 IDLE 用，COMPLETE 分支又硬编码满组 → 语义自相矛盾 | 中 | 删除该形参，状态词统一由引擎回填 |
+| 5 | **音频焦点从第一句占到 `release()`** → 整个训练期间压低其他音乐应用 | 高 | 播完即 `abandonFocus()`；`AUDIOFOCUS_LOSS` 走真正放弃（否则复用旧 request 永远拿不到焦点）；抽出纯函数 `focusActionFor` 并单测 |
+| 6 | **同步 `prepare()` 在主线程** → 连点会 jank / ANR | 高 | 改 `prepareAsync` + `onPrepared`；用 `pending` 标记实现"最后一句赢" |
+| 7 | 播放期错误会把 `isAvailable` **永久**置 false，整场语音连文字一起降级 | 中 | 只有"素材打不开"才降级；播放期错误只记日志 |
+| 8 | `repeatLast()` 绕过 `released` 守卫 → 释放后点"重复提示"会新建永不释放的 MediaPlayer | 中 | 入口加 `released` 守卫 |
+| 9 | `VoiceCheckSection` 无 `DisposableEffect` → 离开页面后播放器与焦点泄漏到进程结束 | 中 | 补 `onDispose { guide.release() }` |
+| 10 | `params.voiceSpeed` 全工程没接到播放器 | 中 | `AssetVoiceGuide(initialSpeed)` + `setSpeed` 持久化当前值；接线在 S5/S8 |
+| 11 | `gen-voice.sh` 部分解析成功即返回成功 → 新增条目写法变化会静默漏生成，仍打印"全部就绪 ✅" | 高 | 加"源码条目数 == 解析条数"自检；跳过逻辑改为按**文案哈希**判断（文案变了自动重生成） |
+| 12 | 测试期望值抄自 `DEFAULT` 常量，改参数时会"常量过时"而非"行为错误" | 低 | 保留现状并在测试文件标注；S5 接线后以真实参数来源校准 |
+| 13 | 无生产调用点（引擎是"没人用的库"），AC-13 快照链路缺实现 | 高 | 新增 `TrainingSessionCoordinator`（唯一接入点，含 tick、阶段语音、快照落盘）+ 11 条协调器测试 |
+
+### 刻意保留的行为（附理由）
+
+**锁屏很久后回来，已完成次数会很大**：训练期间有前台服务在跑，语音与倒计时确实在走，用户每一组都在按计划进行，计入是正确的。AC-07 说的"不补造"针对的是**用户主动提前结束**，那条已由 `stop()` 冻结时间实现。真被杀进程走快照恢复，`elapsedActiveMs` 冻结在快照值，不会膨胀。
+
+### 如实标注的未验证项
+
+- **语音内容与文案的一一对应未验证**：`VoiceScriptTest` 只能证明素材存在且非空，无法证明 `contract.m4a` 里念的确实是收缩文案。低成本方案（按 `字节数/字数` 落在中位数 ±15%）已记录，未实施。
+- **AC-06 的真实来电未验**：本机无 `cmd telecom` 注入通道，目前只有纯函数层（`focusActionFor`）与结构保证（音频层与训练层零耦合）。
+- **协调器尚未接入 UI/前台服务**：S5 完成。届时 AC-02/05/07/13 的端到端验证才真正成立。
