@@ -51,7 +51,7 @@ object ShareCardBuilder {
      * 这些词一旦出现在分享文本里就是合规事故（FR-13 / AC-22）。
      */
     val FORBIDDEN_IN_SHARE: List<String> = listOf(
-        "心率", "bpm", "呼吸", "HRV", "漏尿", "覆盖", "SQI", "信号", "视频", "画面",
+        "心率", "bpm", "呼吸", "HRV", "漏尿", "覆盖", "SQI", "信号", "视频", "画面", // banned-ok: 黑名单定义本身
     )
 }
 

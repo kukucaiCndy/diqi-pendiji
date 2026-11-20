@@ -46,10 +46,17 @@ RAW="$(grep -rnE "$PATTERN" "$ROOT/android" \
         --include='*.kt' --include='*.xml' \
         "${EXCLUDE_ARGS[@]}" 2>/dev/null || true)"
 
+# 行内白名单：带 `banned-ok` 标记的行会被跳过。
+# 为什么需要它：合规文案里**必须**出现这些词，例如
+#   「内容不含：心率、呼吸率、HRV…」—— 这是披露，不是违规；
+# 以及 BannedWords 的黑名单常量定义本身。
+# 用显式标记而不是模糊的语义匹配，是为了让每一处放行都可审计
+# （看到 banned-ok 就要看到理由）。
 # 过滤掉纯注释行与 BannedWords.kt 自身的词表定义
 FILTERED="$(printf '%s\n' "$RAW" \
   | grep -vE ':[[:space:]]*(//|\*|/\*)' \
   | grep -v 'core/text/BannedWords.kt' \
+  | grep -v 'banned-ok' \
   | grep -v 'tools/scan-banned.sh' \
   | grep -v '^\s*$' || true)"
 

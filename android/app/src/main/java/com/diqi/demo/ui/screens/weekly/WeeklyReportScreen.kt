@@ -141,7 +141,8 @@ fun WeeklyReportScreen(
                 VSpace(HrSpacing.xxs)
 
                 Text(
-                    "内容不含：心率、呼吸率、HRV、漏尿记录、任何画面。",
+                    // 这是**披露**不含哪些字段，属于 FR-13 要求的正面表述
+                    "内容不含：心率、呼吸率、HRV、漏尿记录、任何画面。",  // banned-ok: 否定式披露
                     style = HrType.disclaimer,
                     color = HrColor.InkSecondary,
                 )

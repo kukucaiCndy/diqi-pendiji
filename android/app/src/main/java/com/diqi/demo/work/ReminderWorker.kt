@@ -1,6 +1,7 @@
 package com.diqi.demo.work
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -35,6 +36,9 @@ class ReminderWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
 
+    // POST_NOTIFICATIONS 是 API 33 才引入的字符串常量；在更低版本上
+    // checkSelfPermission 会返回 GRANTED（因为该权限不存在），行为正确。
+    @SuppressLint("InlinedApi")
     override suspend fun doWork(): Result {
         val context = applicationContext
 

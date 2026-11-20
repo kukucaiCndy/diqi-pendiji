@@ -116,8 +116,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
  */
 @Composable
 fun SettingsScreen(
-    onOpenDesignSystem: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onOpenDesignSystem: (() -> Unit)? = null,
 ) {
     val vm = rememberContainerViewModel { SettingsViewModel(it) }
     val state by vm.state.collectAsState()

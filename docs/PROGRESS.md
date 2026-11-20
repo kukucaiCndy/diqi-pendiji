@@ -463,3 +463,20 @@
 ### 单测
 
 131 项 / 0 失败（新增 `ShareCardBuilderTest` 6 项）。
+
+### 补：扫描器误报修复（AC-14 门禁必需）
+
+S8 引入的两处文案让 `scan-banned.sh` 永久误红：
+
+1. 周报预览里的**披露性文案**「内容不含：心率、呼吸率、HRV、漏尿记录、任何画面」——
+   这是 FR-13 要求的正面表述，但字面命中了"心率/HRV/漏尿"。
+2. `ShareCardBuilder.FORBIDDEN_IN_SHARE` 的**黑名单常量定义**本身。
+
+如果不管，AC-14 的门禁就永久失效（每次都红 → 大家开始忽略它）。
+处置：给扫描器加**行内白名单标记 `banned-ok`**，并把标记放在**命中行本身**上
+（首版放在上一行，grep 只看命中行，所以没生效 —— 又是一次"看起来做了其实没做"）。
+
+选择显式标记而不是模糊的语义匹配，是因为每处放行都必须写明理由，可审计。
+
+同时修掉两个 lint warning：`POST_NOTIFICATIONS` 的 `InlinedApi`（加 `@SuppressLint` 并说明理由）、
+`SettingsScreen` 的 `ModifierParameter` 顺序。
