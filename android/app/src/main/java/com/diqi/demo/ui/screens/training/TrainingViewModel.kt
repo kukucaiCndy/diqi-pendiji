@@ -182,12 +182,23 @@ class TrainingViewModel(
      * 关键：`showNumbers` 为 false 时 UI **不会**渲染任何数字 ——
      * 这条约束由 `MetricUiState` 的类型表达，而不是靠界面记得判断。
      */
+    /**
+     * 观测到 faceInFrame=false 时按"已达到 3 秒阈值"处理。
+     *
+     * 真实相机链路里这个时长由 `CameraController` 逐帧累计；演示/无相机场景下
+     * 没有逐帧信息，用常量直接判定 —— 目的是验证"到阈值就切 NO_DATA"这条路径，
+     * 而不是精确计时（精确计时已由 QualityGate 单测覆盖）。
+     */
+    private val FACE_LOST_SIMULATED_MS = QualityGate.FACE_LOST_NO_DATA_MS
+
     private fun computeMetric(): MetricUiState {
         val snap = sensor.snapshot(coordinator.elapsedActiveMs().toInt() / 1000)
         if (snap.missingReason == MissingReason.NOT_ENABLED) {
             return MetricUiState.NotEnabled
         }
-        val verdict = QualityGate.evaluate(snap)
+        // 人脸连续丢失时长：由快照的 faceInFrame 驱动（真实源由 CameraController 维护）
+        val faceLostMs = if (snap.faceInFrame) 0L else FACE_LOST_SIMULATED_MS
+        val verdict = QualityGate.evaluate(snap, faceLostMs = faceLostMs)
         return when (verdict.state) {
             com.diqi.demo.data.db.QualityState.VALID -> MetricUiState.Valid(
                 heartRateBpm = snap.heartRateBpm,

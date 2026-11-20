@@ -151,6 +151,37 @@ class DemoSensor(
             )
         }
 
+        // 故障注入（仅演示模式）：让 AC-16/17 的界面切换能在真机上被验证
+        when (DemoFault.current) {
+            DemoFault.Kind.FACE_LOST -> return SensorSnapshot(
+                state = QualityState.NO_DATA,
+                isSimulated = true,
+                elapsedSec = nowElapsedSec,
+                faceInFrame = false,
+                missingReason = MissingReason.FACE_LOST,
+            )
+            DemoFault.Kind.LOW_LIGHT -> return SensorSnapshot(
+                state = QualityState.DEGRADED,
+                heartRateBpm = hrBase,
+                sqi = 0.72f,
+                isSimulated = true,
+                elapsedSec = nowElapsedSec,
+                faceInFrame = true,
+                lightOk = false,
+                missingReason = MissingReason.LOW_LIGHT,
+            )
+            DemoFault.Kind.LOW_SQI -> return SensorSnapshot(
+                state = QualityState.INVALID,
+                heartRateBpm = hrBase,
+                sqi = 0.20f,
+                isSimulated = true,
+                elapsedSec = nowElapsedSec,
+                faceInFrame = true,
+                missingReason = MissingReason.NONE,
+            )
+            DemoFault.Kind.NONE -> Unit
+        }
+
         // 用正弦做可见的、可预测的变化，方便演示时讲解"数值会随呼吸起伏"
         val t = nowElapsedSec.toFloat()
         val hr = hrBase + 4f * kotlin.math.sin(t / 9f)

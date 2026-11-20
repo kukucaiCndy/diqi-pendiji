@@ -229,7 +229,17 @@ data class EngineSnapshot(
             elapsedActiveMs < params.totalActiveMs - 1_000L
 
     companion object {
-        const val MIN_RESUMABLE_MS = 3_000L
+        /**
+         * 低于这个时长就不值得提示"继续"。
+         *
+         * 首版是 3 秒 —— 结果是用户误触返回、或者刚进去就被打断，
+         * 下次进来都会看到「你已经完成 1 次，用时 20 秒，要继续吗？」。
+         * 对 55+ 用户来说这是一个需要额外做决定的打扰，而信息量几乎为零。
+         *
+         * 提到 30 秒（约 2 组）：只有真的练进去了才值得问一次。
+         * 快照本身不丢 —— 用户选择丢弃时才清。
+         */
+        const val MIN_RESUMABLE_MS = 30_000L
     }
 }
 

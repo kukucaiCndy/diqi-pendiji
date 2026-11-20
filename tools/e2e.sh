@@ -28,6 +28,7 @@
 #   tools/e2e.sh logs [filter]      清空并跟踪 logcat
 #   tools/e2e.sh seed [days N]      造 N 天历史记录（仅 debug 构建）
 #   tools/e2e.sh demo [true|false]  切换演示模式（仅 debug 构建）
+#   tools/e2e.sh fault <kind>       注入故障 face_lost|low_light|low_sqi|none（演示模式）
 #   tools/e2e.sh clear-data-all     清空业务数据（仅 debug 构建）
 #   tools/e2e.sh ensure             自检设备连通，掉线自动重连
 # ─────────────────────────────────────────────────────────────────────────────
@@ -347,6 +348,12 @@ PY
     adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \
         -a com.diqi.demo.DEBUG_SEED -e action demo --ez on "$on" >/dev/null
     echo "demo=$on" ;;
+  fault)
+    ensure >/dev/null || exit 1
+    # 演示模式下的故障注入（验证 AC-16/17 的界面切换）
+    adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \
+        -a com.diqi.demo.DEBUG_SEED -e action fault -e kind "${1:-none}" >/dev/null
+    echo "fault=${1:-none}" ;;
   clear-data-all)
     ensure >/dev/null || exit 1
     adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \

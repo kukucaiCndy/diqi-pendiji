@@ -73,6 +73,16 @@ class DebugSeedReceiver : BroadcastReceiver() {
                         container.settingsStore.setDemoMode(on)
                         Log.i(TAG, "演示模式 = $on")
                     }
+                    ACTION_FAULT -> {
+                        val kind = intent.getStringExtra("kind") ?: "none"
+                        com.diqi.demo.sensor.DemoFault.current = when (kind) {
+                            "face_lost" -> com.diqi.demo.sensor.DemoFault.Kind.FACE_LOST
+                            "low_light" -> com.diqi.demo.sensor.DemoFault.Kind.LOW_LIGHT
+                            "low_sqi" -> com.diqi.demo.sensor.DemoFault.Kind.LOW_SQI
+                            else -> com.diqi.demo.sensor.DemoFault.Kind.NONE
+                        }
+                        Log.i(TAG, "故障注入 = ${com.diqi.demo.sensor.DemoFault.current}")
+                    }
                     ACTION_PROBE -> {
                         Log.i(TAG, "probe: sessions=${container.sessionRepository.recentReal(100).size}")
                     }
@@ -149,5 +159,6 @@ class DebugSeedReceiver : BroadcastReceiver() {
         const val ACTION_CLEAR = "clear"
         const val ACTION_PROBE = "probe"
         const val ACTION_DEMO = "demo"
+        const val ACTION_FAULT = "fault"
     }
 }
