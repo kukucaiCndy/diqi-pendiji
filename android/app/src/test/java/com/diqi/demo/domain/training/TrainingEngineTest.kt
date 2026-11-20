@@ -271,13 +271,22 @@ class TrainingEngineTest {
 
     @Test
     fun 快照可恢复性判定() {
+        // 阈值提到 30 秒：只有真的练进去了才值得问"要不要继续"。
+        // 3 秒阈值会让误触返回的用户每次进来都被问一次（没有信息量的打扰）。
         val e = newEngine()
         e.start()
         clock.advance(1_000L)
         assertFalse("只练了 1 秒不值得提示继续", e.snapshot()!!.isResumable(params))
 
-        clock.advance(5_000L)
-        assertTrue(e.snapshot()!!.isResumable(params))
+        clock.advance(20_000L)
+        assertFalse(
+            "20 秒（约 1 组）仍不值得打扰：" +
+                "阈值是 ${EngineSnapshot.MIN_RESUMABLE_MS}ms",
+            e.snapshot()!!.isResumable(params),
+        )
+
+        clock.advance(15_000L)
+        assertTrue("累计 36 秒应值得提示继续", e.snapshot()!!.isResumable(params))
 
         clock.advance(params.totalActiveMs)
         assertFalse("已跑完不需要恢复", e.snapshot()!!.isResumable(params))
