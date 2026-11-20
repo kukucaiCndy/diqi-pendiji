@@ -148,10 +148,9 @@ fun HerRhythmNavHost(
                     )
                 }
                 composable(Routes.RECORDS) {
-                    PlaceholderScreen(
-                        title = "记录与七天",
-                        message = "日历打卡、近七天累计与家人周报入口，会在记录页实现时完成。",
-                        tag = "records.root",
+                    com.diqi.demo.ui.screens.records.RecordsScreen(
+                        onOpenWeekly = { navController.navigate(Routes.WEEKLY_REPORT) },
+                        onOpenLeak = { navController.navigate(Routes.LEAK_DIARY) },
                     )
                 }
                 composable(Routes.PROFILE) {
@@ -186,8 +185,13 @@ fun HerRhythmNavHost(
                 // ── 全屏路由（底部栏不显示）───────────────────────────────
                 composable(Routes.TRAINING_LIVE) {
                     TrainingScreen(
-                        onFinished = {
-                            navController.navigate(Routes.COMPLETE) {
+                        onFinished = { sessionId ->
+                            val route = if (sessionId != null) {
+                                "${Routes.COMPLETE}?sessionId=$sessionId"
+                            } else {
+                                Routes.COMPLETE
+                            }
+                            navController.navigate(route) {
                                 // 训练页不留在返回栈里：返回键不应回到"已结束的训练"
                                 popUpTo(Routes.TRAINING_LIVE) { inclusive = true }
                             }
@@ -201,11 +205,23 @@ fun HerRhythmNavHost(
                         onSkip = { navController.popBackStack() },
                     )
                 }
-                composable(Routes.COMPLETE) {
-                    PlaceholderScreen(
-                        title = "完成与自评",
-                        message = "本次时长、次数、暂停次数与自评。",
-                        tag = "complete.root",
+                composable(
+                    route = Routes.COMPLETE + "?sessionId={sessionId}",
+                    arguments = listOf(
+                        androidx.navigation.navArgument("sessionId") {
+                            type = androidx.navigation.NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                    ),
+                ) { entry ->
+                    com.diqi.demo.ui.screens.complete.CompleteScreen(
+                        sessionId = entry.arguments?.getString("sessionId"),
+                        onDone = {
+                            navController.navigate(Routes.HOME) {
+                                popUpTo(Routes.HOME) { inclusive = true }
+                            }
+                        },
                     )
                 }
                 composable(Routes.WEEKLY_REPORT) {
@@ -216,10 +232,8 @@ fun HerRhythmNavHost(
                     )
                 }
                 composable(Routes.LEAK_DIARY) {
-                    PlaceholderScreen(
-                        title = "漏尿日记",
-                        message = "今天是否发生、以及当时的情境，全部可以跳过。",
-                        tag = "leak.root",
+                    com.diqi.demo.ui.screens.records.LeakDiaryScreen(
+                        onBack = { navController.popBackStack() },
                     )
                 }
             }

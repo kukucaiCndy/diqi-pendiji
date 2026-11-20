@@ -57,7 +57,7 @@ import com.diqi.demo.ui.theme.HrType
  */
 @Composable
 fun TrainingScreen(
-    onFinished: () -> Unit,
+    onFinished: (String?) -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -94,7 +94,7 @@ fun TrainingScreen(
 
     // 训练结束 → 去完成页（S7 之前是占位）
     LaunchedEffect(state.finished) {
-        if (state.finished) onFinished()
+        if (state.finished) onFinished(state.savedSessionId)
     }
 
     // 中断恢复对话框（AC-13）
