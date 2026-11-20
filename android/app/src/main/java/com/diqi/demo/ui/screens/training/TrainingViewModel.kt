@@ -21,8 +21,19 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 /** 训练页 UI 状态。 */
+/**
+ * 训练页的**低频**状态。
+ *
+ * 刻意**不含** `frame` 与 `metric` —— 它们每秒变一次，若放在同一个 StateFlow 里，
+ * 整个页面每秒重组一次。实测：运行中 40 帧/20s、22 帧慢（p90 61ms），
+ * 而暂停后不推帧时 **0 帧 0 慢**，说明掉帧 100% 来自"推帧导致整页重组"。
+ *
+ * 所以拆成三条流：
+ * - [TrainingViewModel.meta]  低频（进出对话框、开关变化）
+ * - [TrainingViewModel.frames] 每秒（只由 [TickingSection] 订阅）
+ * - [TrainingViewModel.metric] 每秒（只由指标区订阅）
+ */
 data class TrainingUiState(
-    val frame: TrainingFrame = TrainingFrame.idle(TrainingParams.DEFAULT.repsPerSet),
     val params: TrainingParams = TrainingParams.DEFAULT,
     val paused: Boolean = false,
     /** 进入页面时发现的未完成训练（AC-13）*/
@@ -30,14 +41,6 @@ data class TrainingUiState(
     val showStopConfirm: Boolean = false,
     val finished: Boolean = false,
     val savedSessionId: String? = null,
-    /**
-     * 指标区状态。
-     *
-     * 首版是一个 `sensorEnabled: Boolean` 假开关（恒 false 且无赋值点）。
-     * 用枚举替代：S6 接入时必须**显式**给出四态之一，
-     * 不可能出现"S6 随手翻转 true 就显示假状态"的情况。
-     */
-    val metric: MetricUiState = MetricUiState.NotEnabled,
     /** FR-01 分流：训练页常驻就医提示条 */
     val clinicalNotice: Boolean = false,
     val voiceAvailable: Boolean = true,
@@ -76,6 +79,14 @@ class TrainingViewModel(
 
     private val _state = MutableStateFlow(TrainingUiState(params = params))
     val state: StateFlow<TrainingUiState> = _state.asStateFlow()
+
+    /** 每秒变化的帧。只应被"倒计时/圆环/时间轴"这类叶子订阅。 */
+    private val _frames = MutableStateFlow(TrainingFrame.idle(params.repsPerSet))
+    val frames: StateFlow<TrainingFrame> = _frames.asStateFlow()
+
+    /** 每秒变化的指标区状态。只应被指标区叶子订阅。 */
+    private val _metric = MutableStateFlow<MetricUiState>(MetricUiState.NotEnabled)
+    val metric: StateFlow<MetricUiState> = _metric.asStateFlow()
 
     private var started = false
     private var savedId: String? = null
@@ -164,11 +175,8 @@ class TrainingViewModel(
         observing = true
         viewModelScope.launch {
             coordinator.frames.collect { frame ->
-                _state.value = _state.value.copy(
-                    frame = frame,
-                    paused = frame.status == TrainingStatus.PAUSED,
-                    metric = computeMetric(),
-                )
+                _frames.value = frame
+                _metric.value = computeMetric()
                 if (frame.status == TrainingStatus.COMPLETE && savedId == null) {
                     finishSession(frame)
                 }
@@ -215,9 +223,13 @@ class TrainingViewModel(
     // ── 交互 ──────────────────────────────────────────────────────────────
 
     fun togglePause() {
-        if (_state.value.paused) coordinator.resume() else coordinator.pause()
-        _state.value = _state.value.copy(paused = _state.value.paused.not())
+        val nowPaused = !_state.value.paused
+        if (nowPaused) coordinator.pause() else coordinator.resume()
+        _state.value = _state.value.copy(paused = nowPaused)
     }
+
+    /** 给"结束确认"弹窗用的即时完成次数（弹窗是低频场景，直接取一次即可） */
+    fun completedRepsNow(): Int = coordinator.currentFrame().completedReps
 
     fun requestStop() {
         _state.value = _state.value.copy(showStopConfirm = true)
@@ -240,6 +252,9 @@ class TrainingViewModel(
         coordinator.repeatVoice()
         _state.value = _state.value.copy(voiceAvailable = container.voiceGuide.isAvailable)
     }
+
+    /** 当前帧（非响应式）：供低频场景取值 */
+    fun frameNow(): TrainingFrame = coordinator.currentFrame()
 
     /**
      * 离开页面。

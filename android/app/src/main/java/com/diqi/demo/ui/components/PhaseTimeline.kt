@@ -36,7 +36,11 @@ import com.diqi.demo.ui.theme.HrType
  */
 @Composable
 fun PhaseTimeline(
-    frame: TrainingFrame,
+    /** 当前阶段在四阶段里的序号（-1 表示已完成）*/
+    currentOrder: Int,
+    repIndex: Int,
+    totalReps: Int,
+    completed: Boolean,
     params: com.diqi.demo.domain.training.TrainingParams,
     modifier: Modifier = Modifier,
 ) {
@@ -47,14 +51,6 @@ fun PhaseTimeline(
         TrainingPhase.RELAX to params.relaxSec,
     )
 
-    val currentOrder = when (frame.phase) {
-        TrainingPhase.IDLE, TrainingPhase.PREPARATION -> 0
-        TrainingPhase.CONTRACT -> 1
-        TrainingPhase.HOLD -> 2
-        TrainingPhase.RELAX -> 3
-        TrainingPhase.COMPLETE -> 4
-    }
-
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -64,7 +60,7 @@ fun PhaseTimeline(
             .testTag(UiTag.P04_PHASE_TIMELINE)
             .semantics {
                 contentDescription =
-                    "阶段时间轴，当前 ${frame.phase.displayName}，第 ${frame.repIndex} 次，共 ${frame.totalReps} 次"
+                    "阶段时间轴，进行到第 ${currentOrder + 1} 个阶段，第 $repIndex 次，共 $totalReps 次"
             },
     ) {
         Text("阶段", style = HrType.micro, color = HrColor.TimelineLabel)
@@ -93,14 +89,14 @@ fun PhaseTimeline(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Dot(if (frame.status == TrainingStatus.COMPLETE) HrColor.Good else HrColor.TimelinePending)
+                Dot(if (completed) HrColor.Good else HrColor.TimelinePending)
                 Text(
-                    "第 ${frame.repIndex} 次",
+                    "第 $repIndex 次",
                     style = HrType.labelSmall,
                     color = HrColor.TimelineName,
                     modifier = Modifier.testTag(UiTag.P04_REP_COUNTER),
                 )
-                Text("/ ${frame.totalReps}", style = HrType.micro, color = HrColor.TimelineDuration)
+                Text("/ $totalReps", style = HrType.micro, color = HrColor.TimelineDuration)
             }
         }
     }
