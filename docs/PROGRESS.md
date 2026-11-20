@@ -659,3 +659,36 @@ battery 24.8℃ / CPU0 44.9℃ / CPU1 42.6℃
 三段都有证据，而不是靠一个常量假装达成。
 
 单测 134 项 / 0 失败；仪器化 32 项 / 0 失败。
+
+---
+
+## S9 补充 4 · 提醒链路的设备验证 与 掉帧归因的失败
+
+### 提醒（P1）：链路验到 Worker 被系统调起为止
+
+| 环节 | 证据 |
+| --- | --- |
+| 开关 → 入队 | `WM-SystemJobScheduler: Scheduling work ID 1638cf5f-… Job ID 0` |
+| WorkManager 注册到系统 | `JOB androidx.work.systemjobscheduler:u0a525/0 … TIME=+59m13s`（初始延迟 1 小时，符合设计） |
+| 强杀后重排 | `WM-ForceStopRunnable: Application was force-stopped, rescheduling.` |
+| 系统能调起 Worker | `cmd jobscheduler run -f -n androidx.work.systemjobscheduler` → `Running job [FORCED]` 且 `WM-Processor: Processor: processing WorkGenerationalId(…ReminderWorker…)` |
+
+**未验到的最后一环**：`notify()` 是否真的出通知。
+WorkManager 拒绝提前执行周期任务：
+`Delaying execution for ReminderWorker because it is being executed before schedule`
+—— 这是正确行为，但也意味着只能等约 59 分钟才能看到通知。
+
+**结论**：提醒的**排程与调起链路**已验证通过；**通知投递**未验证。如实标注，不写成"已通过"。
+
+### 掉帧归因：这轮没做成，记录失败原因
+
+想用"静止页面滑动的掉帧基线"来做归因对比，但记录页内容不足一屏，
+滑动没有产生实际渲染（`Total frames rendered: 1`），基线无效。
+
+进一步确认设备是**自适应刷新率**（dumpsys display 同时报出 60/90/120Hz），
+所以 `gfxinfo` 的 janky 判定会随当前刷新率变化，这让百分比这条指标更难解释。
+
+**已确认的结论**：修复前后"每秒一次的推帧各产生一帧慢帧"（40 帧里 21 帧慢），
+说明**每次推帧的重组成本约 61ms**，不是"帧率不足"，而是"单次重组太重"。
+下一步必须做的是把会变化的子树（倒计时 + 圆环）从整页重算里隔离出去
+（拆 StateFlow 或提出 `verticalScroll`），而不是继续调 tick 频率。
