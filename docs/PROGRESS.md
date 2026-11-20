@@ -784,3 +784,42 @@ Janky frames (legacy): 22 (55.00%)
 
 **恢复需要的操作（需要人在设备旁）**：
 `设置 → 开发者选项 → 无线调试 → 开启`，确认端口仍为 `41015`（否则告诉我新端口）。
+
+---
+
+## S9 补充 6 · `TrainingDeps` 抽取成功，但 VM 测试**没写成**（如实记录）
+
+### 成功的部分：把关键接入点变成可测
+
+复审指出「`TrainingViewModel`（326 行）在 test/androidTest 里被引用 0 次」，
+根因是它直接依赖具体的 `AppContainer`（里面是 Room + DataStore，都要 Android 环境）。
+
+已抽出 **`TrainingDeps`** 接口（8 个成员：clock / voice / snapshots /
+currentSettings / saveSession / sensorFor / obtainSession / releaseSession），
+`AppContainer` 直接实现它。**调用点零改动**（`TrainingViewModel(container)` 依然成立），
+`assembleDebug` 与 135 项单测全绿。
+
+### 失败的部分：测试本身写出来会挂死
+
+写好的 `TrainingViewModelTest`（14 个用例，覆盖 AC-08/13/19、saveFailed、AC-07）
+**跑不起来**，`./gradlew test` 挂满 10 分钟。
+
+诊断（已确认，不是猜）：协调器的 ticker 是永续循环
+`while (isActive) { … delay(100) }`，只有训练完成才 break；
+而测试里用的是 `TestClock`——时钟**不会**随测试调度器的虚拟时间自增。
+两者叠加，`advanceUntilIdle()` 会无限推进虚拟时间、永不返回。
+
+中途试过改用 `runCurrent()`（只执行已就绪任务、不推进时间），但那种写法下
+`finishSession` 里的 suspend 保存不会被执行，断言拿不到数据，
+加上我误用 `pkill` 弄坏了 Gradle daemon（`Unexpected type tag 71`），
+最终**删除该测试文件**，保持仓库 `./gradlew test` 可用（135 项全绿）。
+
+### 下一步该怎么做（已定位，不是空话）
+
+测试里不要用真实 `TrainingSessionCoordinator`（它带永续 ticker）。
+应该给 VM 注一个**假会话**（只实现 `currentFrame / pause / resume / stop /
+elapsedActiveMs / pausedMs / pauseCount / start / release / currentFrame` 的最小桩），
+或用 `TestScope` 且让 ticker 在测试结束时被取消后再断言。
+前者的成本更低、也更符合"单元测试只测这一个单元"的原则。
+
+这是本轮**没做成**的事，不做粉饰。

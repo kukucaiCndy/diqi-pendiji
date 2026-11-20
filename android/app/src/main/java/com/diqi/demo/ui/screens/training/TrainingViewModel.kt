@@ -2,7 +2,7 @@ package com.diqi.demo.ui.screens.training
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.diqi.demo.AppContainer
+import com.diqi.demo.training.TrainingDeps
 import com.diqi.demo.data.db.SensorMode
 import com.diqi.demo.data.repo.SessionDraft
 import com.diqi.demo.domain.training.EngineSnapshot
@@ -64,7 +64,7 @@ data class TrainingUiState(
  *    用户选继续则用快照恢复，选丢弃则清掉快照从零开始（AC-13）。
  */
 class TrainingViewModel(
-    private val container: AppContainer,
+    private val container: TrainingDeps,
     private val params: TrainingParams = TrainingParams.DEFAULT,
 ) : ViewModel() {
 
@@ -75,7 +75,7 @@ class TrainingViewModel(
      *
      * 这样锁屏/重建时引擎状态不丢，AC-05「进度误差 ≤1s」才成立。
      */
-    private val coordinator: TrainingSessionCoordinator = container.obtainTrainingSession(params)
+    private val coordinator: TrainingSessionCoordinator = container.obtainSession(params)
 
     private val _state = MutableStateFlow(TrainingUiState(params = params))
     val state: StateFlow<TrainingUiState> = _state.asStateFlow()
@@ -103,7 +103,7 @@ class TrainingViewModel(
         // 首版漏了"立刻开始"这一步，页面永远停在「等待开始」——
         // 真机验证时才发现（倒计时一直是 00:00）。
         viewModelScope.launch {
-            val settings = container.settingsStore.current()
+            val settings = container.currentSettings()
             val clinical = settings.screening.hasRiskAnswers
             demoMode = settings.isDemoMode
             _state.value = _state.value.copy(demoMode = settings.isDemoMode)
@@ -132,7 +132,7 @@ class TrainingViewModel(
             _state.value = _state.value.copy(
                 pendingRecovery = pending,
                 clinicalNotice = clinical,
-                voiceAvailable = container.voiceGuide.isAvailable,
+                voiceAvailable = container.voice.isAvailable,
             )
             if (pending == null) start()
         }
@@ -148,7 +148,7 @@ class TrainingViewModel(
             started = true
             if (!ok) {
                 // 参数变了：不能继续，只能丢弃
-                container.snapshotStore.clear()
+                container.snapshots.clear()
                 coordinator.start()
             }
             _state.value = _state.value.copy(pendingRecovery = null)
@@ -159,7 +159,7 @@ class TrainingViewModel(
     /** 用户选择「丢弃」：清掉快照后立刻重开一场。 */
     fun discardSnapshot() {
         viewModelScope.launch {
-            container.snapshotStore.clear()
+            container.snapshots.clear()
             _state.value = _state.value.copy(pendingRecovery = null)
             start()
         }
@@ -279,12 +279,12 @@ class TrainingViewModel(
     /** 保存失败后放弃：清会话并允许离开（用户已知情）。 */
     fun abandonOnSaveFailure() {
         _state.value = _state.value.copy(saveFailed = false, finished = true, savedSessionId = null)
-        container.releaseTrainingSession()
+        container.releaseSession()
     }
 
     fun repeatVoice() {
         coordinator.repeatVoice()
-        _state.value = _state.value.copy(voiceAvailable = container.voiceGuide.isAvailable)
+        _state.value = _state.value.copy(voiceAvailable = container.voice.isAvailable)
     }
 
     /** 当前帧（非响应式）：供低频场景取值 */
@@ -339,11 +339,11 @@ class TrainingViewModel(
         )
 
         viewModelScope.launch {
-            runCatching { container.sessionRepository.save(draft) }
+            runCatching { container.saveSession(draft) }
                 .onSuccess {
                     _state.value = _state.value.copy(finished = true, savedSessionId = sessionId)
                     // 训练已结束，可以释放会话了
-                    container.releaseTrainingSession()
+                    container.releaseSession()
                 }
                 .onFailure {
                     // 保存失败**不能**置 finished —— 置了会立刻导航到完成页，

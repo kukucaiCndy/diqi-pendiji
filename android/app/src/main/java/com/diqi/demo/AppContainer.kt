@@ -52,9 +52,9 @@ import kotlinx.coroutines.cancel
  * 用 `by lazy` 让它们在真正需要时才初始化。CameraX **绝不能**在这里初始化 ——
  * 它需要 Activity/Lifecycle 上下文。
  */
-class AppContainer(private val app: Application) {
+class AppContainer(private val app: Application) : com.diqi.demo.training.TrainingDeps {
 
-    val clock: Clock = MonotonicClock
+    override val clock: Clock = MonotonicClock
 
     val context: Application get() = app
 
@@ -68,7 +68,7 @@ class AppContainer(private val app: Application) {
 
     val leakDiaryRepository: LeakDiaryRepository by lazy { LeakDiaryRepository(database) }
 
-    val snapshotStore: SnapshotStore by lazy { DataStoreSnapshotStore(app) }
+    override val snapshots: SnapshotStore by lazy { DataStoreSnapshotStore(app) }
 
     /**
      * 按当前设置选择感知数据源。
@@ -80,7 +80,7 @@ class AppContainer(private val app: Application) {
      * 刻意先只有这两个实现：**没有摄像头也绝不出假数值**，
      * 这是 FR-08 与 AC-14 的底线。
      */
-    fun sensorFor(demoMode: Boolean): SensorAdapter =
+    override fun sensorFor(demoMode: Boolean): SensorAdapter =
         if (demoMode) DemoSensor() else NullSensor()
 
     /**
@@ -90,7 +90,7 @@ class AppContainer(private val app: Application) {
      * 播放器跟着页面重建会打断正在播的句子。播完会主动归还音频焦点，
      * 所以长期持有是安全的。
      */
-    val voiceGuide: VoiceGuide by lazy { AssetVoiceGuide(app) }
+    override val voice: VoiceGuide by lazy { AssetVoiceGuide(app) }
 
     /**
      * **训练会话必须 application-scoped**（这条是 AC-05 的根因修复）。
@@ -116,13 +116,25 @@ class AppContainer(private val app: Application) {
      *
      * 注意引擎是 app-scoped 的，所以这里不再需要外部传入 viewModelScope。
      */
+    override fun obtainSession(params: TrainingParams): TrainingSessionCoordinator =
+        obtainTrainingSession(params)
+
+    override suspend fun currentSettings(): com.diqi.demo.data.prefs.AppSettings =
+        settingsStore.current()
+
+    override suspend fun saveSession(draft: com.diqi.demo.data.repo.SessionDraft) {
+        sessionRepository.save(draft)
+    }
+
+    override fun releaseSession() = releaseTrainingSession()
+
     fun obtainTrainingSession(params: TrainingParams = TrainingParams.DEFAULT): TrainingSessionCoordinator {
         _activeTraining?.let { if (!it.isFinished()) return it }
         val session = TrainingSessionCoordinator(
             engine = TrainingEngine(clock, params),
             clock = clock,
-            voice = voiceGuide,
-            snapshots = snapshotStore,
+            voice = voice,
+            snapshots = snapshots,
             scope = appScope,
             params = params,
         )
@@ -150,8 +162,8 @@ class AppContainer(private val app: Application) {
     ): TrainingSessionCoordinator = TrainingSessionCoordinator(
         engine = TrainingEngine(clock, params),
         clock = clock,
-        voice = voiceGuide,
-        snapshots = snapshotStore,
+        voice = voice,
+        snapshots = snapshots,
         scope = scope,
         params = params,
     )
