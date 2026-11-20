@@ -45,6 +45,15 @@
 
 ---
 
+## 自动化定位的一个坑：Dialog 是独立窗口
+
+`AlertDialog` 在 Compose 里是**独立窗口**，Activity 根节点上的
+`testTagsAsResourceId` 不会继承过去 —— 对话框内的控件在 `uiautomator dump`
+里**没有 resource-id**。因此 AC-07/AC-13 等涉及对话框的断言必须用
+**文本定位**（`tools/e2e.sh tapText`），不能用 testTag。
+
+---
+
 ## 统计
 
 每条 AC 只给**一个**主评级（避免重复计数）：

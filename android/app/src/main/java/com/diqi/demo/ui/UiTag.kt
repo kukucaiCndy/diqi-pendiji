@@ -77,6 +77,8 @@ object UiTag {
     const val P04_RESUME_BUTTON = "p04.resume_button"
     const val P04_STOP_BUTTON = "p04.stop_button"
     const val P04_REPEAT_VOICE_BUTTON = "p04.repeat_voice_button"
+    /** FR-06 第三层：语音状态 */
+    const val P04_VOICE_STATUS = "p04.voice_status"
     const val P04_STOP_CONFIRM_DIALOG = "p04.stop_confirm_dialog"
     const val P04_STOP_CONFIRM = "p04.stop_confirm"
     const val P04_STOP_CANCEL = "p04.stop_cancel"

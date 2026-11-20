@@ -98,10 +98,20 @@ class TrainingSessionCoordinator(
         scope.launch { snapshots.clear() }
     }
 
-    /** 页面/进程销毁：停 tick、释放语音、保存快照。 */
+    /**
+     * 会话结束/页面销毁：停 tick、停语音、保存快照。
+     *
+     * **绝不能调 `voice.release()`** —— voice 是 application-scoped 单例
+     * （`AppContainer.voiceGuide`），而 `AssetVoiceGuide.release()` 会把
+     * `released` 置成不可逆终态。首版在这里 release 了它，导致
+     * **本进程第一场训练之后，后续每一场都全程无声**，而且不崩不报错、
+     * `isAvailable` 仍是 true（评审抓到的发布阻断级缺陷）。
+     *
+     * 语音的生命周期归容器；这里只 `stop()` 掉当前正在播的那句。
+     */
     fun release() {
         stopTicker()
-        voice.release()
+        voice.stop()
         persistSnapshotAsync()
     }
 

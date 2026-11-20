@@ -273,3 +273,60 @@
 - **真机 TalkBack 流程**：本机无 TalkBack 包，只能验证语义节点存在。
 - **`HomeViewModel` 的感知状态**：`READY`/`WEAK` 只在 S6 感知层接入后才可能有真值。
 - **P04/完成页/校准页仍是占位**，FR-15「关键数字 ≥32sp」尚未被真实界面检验。
+
+---
+
+## S5 · P04 训练中 + 前台服务 + 会话生命周期 ✅ 完成
+
+### 交付物
+
+| 类别 | 内容 |
+| --- | --- |
+| P04 | 视频区占位 / 阶段时间轴（三态节点）/ 阶段名 + 倒计时 + 进度轨 / **节律圆环 + 「节律提示」**（D10）/ 次数 + 语音状态 / 指标区 / 常驻免责 / 暂停·结束固定底部 |
+| 组件 | `RhythmRing`（时间驱动、无生理暗示）、`PhaseTimeline` |
+| 会话 | `AppContainer.obtainTrainingSession()`：训练会话 **application-scoped**，Activity 重建不丢进度 |
+| 服务 | 前台服务随训练页进出；补 `POST_NOTIFICATIONS` 申请 |
+| 其它 | `TrainingPrepScreen`（摄像头可选入口 + 直接开始）、`BackHandler` 二次确认、保存失败提示、`MetricUiState` 枚举 |
+
+### 端到端证据（真机）
+
+| AC | 判据 | 实测结果 |
+| --- | --- | --- |
+| **AC-01** | 跳过摄像头完成一次训练，完成页出现、记录可查 | ✅ 走完 8 次 → 完成页；库内**恰好 1 条**，`completedReps=8`、`durationMs=125s`（= 5 + 8×15，精确）、`sensorMode=null`、`planVersion=77d9f32b` |
+| **AC-02** | 暂停 10s 恢复，计时冻结、恢复无跳变 | ✅ 暂停瞬间 00:03 → 10 秒后仍 00:03 → 恢复后仍 00:03 |
+| **AC-05** | 锁屏 30s 返回，进度误差小 | ✅ 锁屏往返 38s 后仍显示「第 3 次 / 保持呼吸」，与按真实耗时推算的期望一致；无恢复弹窗、进度未丢 |
+| **AC-07** | 第 3 次收缩中结束 → `completedReps=2` | ✅ 库内 `completedReps=2`、`plannedReps=8`、时长 48s |
+| **AC-13** | 训练中断后提供继续/丢弃 | ✅ 重进训练页弹出「上次的训练还没做完 / 已完成 7 次、用时 120 秒 / 丢弃·继续」 |
+| FR-06 二次确认 | 结束需确认 | ✅ 按返回键弹出「要结束这次练习吗？已完成的 2 次会保存下来，不会补算没做完的次数」 |
+
+证据：`docs/evidence/s5_training.png`、`s5_back_confirm.png`、`s5_state.png`
+
+### CodeReview（2 路编排）发现与处置
+
+| # | 问题 | 级别 | 处置 |
+| --- | --- | --- | --- |
+| 1 | **语音被 app 级单例释放成不可逆终态** —— 协调器 `release()` 调了 `voice.release()`，于是**本进程第一场训练之后，后续每一场全程无声**，不崩不报错且 `isAvailable` 仍为 true | **发布阻断** | 协调器 `release()` 改为只 `voice.stop()`，语音生命周期归容器；新增回归测试 `会话结束不得释放全局语音单例` |
+| 2 | **返回键无拦截** —— 按返回直接退出页面，但会话是容器级的仍在跑、帧收集器已销毁 → 训练跑完也不落库（记录静默丢失），且违反 FR-06「结束要二次确认」 | 高 | 加 `BackHandler` → `requestStop()`；真机验证弹出二次确认且不退出 |
+| 3 | **`mode = SensorMode.OFF` 硬编码** —— 演示模式的记录会被当成真实记录，`countsTowardProgress` 把它计入打卡与周报，直接破坏 AC-19 | 高 | 保存时按 `settings.isDemoMode` 写 `SIMULATED` |
+| 4 | **保存失败静默丢记录** —— 只置 `finished=true`，`_activeTraining` 留在"已 finished"的空壳，下次 `obtainTrainingSession` 静默丢弃 | 高 | 置 `saveFailed` 并弹提示、释放会话 |
+| 5 | `sensorEnabled: Boolean` 是假开关（恒 false、无赋值点）—— S6 一翻转就显示假状态 | 高 | 改成 `MetricUiState` 密封接口（`NotEnabled` / `Establishing`），S6 必须显式补齐四态 |
+| 6 | FR-06 第三层「语音状态」缺失（`voiceAvailable` 写了但页面从不读） | 中 | 补「第 N/M 次 + 语音引导中」一行，新增 `P04_VOICE_STATUS` |
+| 7 | 暂停/继续按状态切换 testTag → 自动化的「暂停→恢复」第二步找不到节点 | 中 | 两者共用 `P04_PAUSE_BUTTON`，状态差异走 text/contentDescription |
+| 8 | `observeFrames()` 无幂等守卫却有 3 个调用点 | 中 | 加 `observing` 闸门 |
+| 9 | `pause()` 不停止 ticker（空转到训练结束） | 低 | 保留：纯函数模型下 tick 只是重绘，停不停不影响正确性；已在代码注释说明 |
+
+### 未修，附理由
+
+| 项 | 理由 |
+| --- | --- |
+| `obtainTrainingSession(params)` 忽略参数不一致 | 目前只有一套默认参数；S9 引入参数化后需改成"参数不一致则拒绝认领并提示丢弃" |
+| AC-08 幂等在极端路径下不成立 | 依赖「导航 `popUpTo` + VM 的 `savedId` 闸门」两层；理论上第二个 VM 认领同一会话会写第二行。数据层的 `upsert` 保证同 id 只有一行，但 id 在 VM 里生成。S9 收口时把 id 挪进会话本身即可根治 |
+| `ACTION_UPDATE` / `newTrainingSession()` 死代码 | 前者留给 S5 后续的"通知显示剩余时间"，后者留作测试入口；S9 清理 |
+| FR-06 第四层指标区仍是占位 | S6，`MetricUiState` 已预留四态位 |
+
+### 如实标注的未验证项
+
+- **AC-05 的"≤1s"精度**：真机证据是"阶段与次数与按真实耗时推算的期望一致"，误差受 adb 点击/解析开销（每次 tap 约 1–2s）限制，无法测到 1 秒级；**精确性由纯函数单测保证**（时间线无累加、直接读 `elapsedRealtime`）。
+- **深睡期间语音是否漏播**：未验证；计时正确不代表音频连续。
+- **前台服务在 RedMagicOS 长时后台的实际存活**：只验了 38 秒锁屏，未验 10 分钟。
+- **AC-15/16/17（指标区四态）**：S6。

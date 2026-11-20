@@ -45,6 +45,8 @@ import com.diqi.demo.ui.rememberContainer
 import com.diqi.demo.ui.rememberContainerViewModel
 import com.diqi.demo.ui.screens.dev.DesignSystemScreen
 import com.diqi.demo.ui.screens.home.HomeScreen
+import com.diqi.demo.ui.screens.training.TrainingPrepScreen
+import com.diqi.demo.ui.screens.training.TrainingScreen
 import com.diqi.demo.ui.screens.onboarding.ScreeningScreen
 import com.diqi.demo.ui.screens.onboarding.WelcomeScreen
 import com.diqi.demo.ui.screens.placeholder.PlaceholderScreen
@@ -139,10 +141,10 @@ fun HerRhythmNavHost(
                     )
                 }
                 composable(Routes.TRAINING_PREP) {
-                    PlaceholderScreen(
-                        title = "准备开始",
-                        message = "开始前的确认与「开启摄像头（可选）」入口。这一步会在训练页实现时完成。",
-                        tag = "prep.root",
+                    TrainingPrepScreen(
+                        onStartTraining = { navController.navigate(Routes.TRAINING_LIVE) },
+                        onOpenCalibrate = { navController.navigate(Routes.CALIBRATE) },
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable(Routes.RECORDS) {
@@ -183,10 +185,14 @@ fun HerRhythmNavHost(
 
                 // ── 全屏路由（底部栏不显示）───────────────────────────────
                 composable(Routes.TRAINING_LIVE) {
-                    PlaceholderScreen(
-                        title = "训练中",
-                        message = "阶段时间轴、节律圆环、倒计时与指标区，会在训练页实现时完成。",
-                        tag = "live.root",
+                    TrainingScreen(
+                        onFinished = {
+                            navController.navigate(Routes.COMPLETE) {
+                                // 训练页不留在返回栈里：返回键不应回到"已结束的训练"
+                                popUpTo(Routes.TRAINING_LIVE) { inclusive = true }
+                            }
+                        },
+                        onExit = { navController.popBackStack() },
                     )
                 }
                 composable(Routes.CALIBRATE) {

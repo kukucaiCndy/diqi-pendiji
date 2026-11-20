@@ -258,6 +258,48 @@ class TrainingSessionCoordinatorTest {
         )
     }
 
+    /**
+     * 防复发：会话结束**不得**释放全局语音单例。
+     *
+     * 语音是 `AppContainer.voiceGuide`（app 级单例），而
+     * `AssetVoiceGuide.release()` 会把 `released` 置成不可逆终态。
+     * 首版协调器在 `release()` 里调了 `voice.release()`，结果是
+     * **本进程第一场训练之后，后续每一场都全程无声**，而且不崩不报错。
+     * 这个测试就是拦住它复发。
+     */
+    @Test
+    fun 会话结束不得释放全局语音单例() {
+        init()
+        val spy = RecordingVoiceGuide()
+        val coord = TrainingSessionCoordinator(
+            engine = TrainingEngine(clock, params),
+            clock = clock,
+            voice = spy,
+            snapshots = FakeSnapshotStore(),
+            scope = scope,
+            params = params,
+        )
+        coord.start()
+        coord.release()
+
+        assertFalse("会话结束时不得 release 全局语音单例", spy.released)
+        assertTrue("但应停掉当前正在播的那句", spy.stopped)
+    }
+
+    /** 记录调用的语音替身，用于检查生命周期调用是否正确。 */
+    private class RecordingVoiceGuide : com.diqi.demo.audio.VoiceGuide {
+        var released = false
+        var stopped = false
+        override fun play(script: VoiceScript) = Unit
+        override fun playPhase(phase: TrainingPhase) = Unit
+        override fun repeatLast() = Unit
+        override fun setSpeed(speed: Float) = Unit
+        override fun stop() { stopped = true }
+        override fun release() { released = true }
+        override val isAvailable: Boolean = true
+        override val isSpeaking: Boolean = false
+    }
+
     /** 内存快照存储替身。 */
     private class FakeSnapshotStore : SnapshotStore {
         @Volatile

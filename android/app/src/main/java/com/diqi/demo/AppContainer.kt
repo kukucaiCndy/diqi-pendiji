@@ -16,6 +16,9 @@ import com.diqi.demo.domain.training.TrainingEngine
 import com.diqi.demo.domain.training.TrainingParams
 import com.diqi.demo.training.TrainingSessionCoordinator
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 /**
  * 手写依赖容器（决策 D7：不引入 Hilt）。
@@ -72,6 +75,50 @@ class AppContainer(private val app: Application) {
      * 所以长期持有是安全的。
      */
     val voiceGuide: VoiceGuide by lazy { AssetVoiceGuide(app) }
+
+    /**
+     * **训练会话必须 application-scoped**（这条是 AC-05 的根因修复）。
+     *
+     * 首版把协调器放在 ViewModel 里，锁屏时 Activity 重建 → ViewModel 重建 →
+     * 引擎的 `startedAtElapsedMs` 丢失 → 用户看到的进度退回 0，
+     * 只能靠快照"继续"（而快照最多落后 10 秒）。
+     * 实测 AC-05「锁屏 30s 返回，进度误差 ≤1s」直接不成立。
+     *
+     * 放到容器里之后：Activity 重建不影响引擎，回来时同一个引擎继续算，
+     * 因为时间是从 `elapsedRealtime` 现算的纯函数（D11）。
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private var _activeTraining: TrainingSessionCoordinator? = null
+
+    /** 当前进行中的训练（可能为 null）。UI 重建时用它认领会话而不是新建。 */
+    val activeTraining: TrainingSessionCoordinator?
+        get() = _activeTraining?.takeIf { !it.isFinished() }
+
+    /**
+     * 取得**当前这一场**训练：有未结束的就认领，没有才新建。
+     *
+     * 注意引擎是 app-scoped 的，所以这里不再需要外部传入 viewModelScope。
+     */
+    fun obtainTrainingSession(params: TrainingParams = TrainingParams.DEFAULT): TrainingSessionCoordinator {
+        _activeTraining?.let { if (!it.isFinished()) return it }
+        val session = TrainingSessionCoordinator(
+            engine = TrainingEngine(clock, params),
+            clock = clock,
+            voice = voiceGuide,
+            snapshots = snapshotStore,
+            scope = appScope,
+            params = params,
+        )
+        _activeTraining = session
+        return session
+    }
+
+    /** 结束并丢弃当前会话（用于"丢弃"与测试清理）。 */
+    fun releaseTrainingSession() {
+        _activeTraining?.release()
+        _activeTraining = null
+    }
 
     /**
      * 为一次训练新建协调器。

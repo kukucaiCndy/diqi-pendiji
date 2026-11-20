@@ -13,6 +13,7 @@
 #   tools/e2e.sh dump               打印带 resource-id / text 的节点树
 #   tools/e2e.sh has <tag>          断言节点存在
 #   tools/e2e.sh tap <tag>          点击节点中心
+#   tools/e2e.sh tapText <文本>      按文本点击（Dialog 等独立窗口用）
 #   tools/e2e.sh text <tag>         打印节点 text
 #   tools/e2e.sh attr <tag> <name>  打印节点属性（content-desc / enabled / checked）
 #   tools/e2e.sh wait <tag> [sec]   等待节点出现
@@ -118,6 +119,31 @@ PY
 }
 
 node_center() { node_query "$1" '__center__'; }
+
+# 按 text 精确匹配取中心点。Dialog 是**独立窗口**，Activity 根节点上的
+# testTagsAsResourceId 不会继承过去，所以对话框里的控件只能用文本定位。
+node_center_text() {
+    local target="$1"
+    python3 - "$TMPXML" "$target" <<'PYEOF'
+import sys, xml.etree.ElementTree as ET
+path, target = sys.argv[1], sys.argv[2]
+try:
+    root = ET.parse(path).getroot()
+except Exception:
+    sys.exit(2)
+for n in root.iter('node'):
+    if (n.get('text') or '').strip() == target:
+        b = (n.get('bounds') or '').strip()
+        try:
+            nums = b.replace('][', ',').strip('[]').split(',')
+            x1, y1, x2, y2 = map(int, nums)
+        except Exception:
+            continue
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        sys.exit(0)
+sys.exit(1)
+PYEOF
+}
 node_exists() { node_query "$1" '__exists__'; }
 
 dbpull() {
@@ -247,6 +273,20 @@ PY
     read -r x y <<< "$picked"
     adbs shell input tap "$x" "$y"
     echo "tapped $tag @ $x,$y" ;;
+  tapText)
+    ensure >/dev/null || exit 1
+    target="${1:?文本必填}"
+    picked=""
+    for _ in $(seq 1 6); do
+        if do_dump && picked="$(node_center_text "$target")"; then
+            [[ -n "$picked" ]] && break
+        fi
+        sleep 0.4
+    done
+    [[ -z "$picked" ]] && { echo "[e2e] 未找到文本: $target" >&2; exit 1; }
+    read -r x y <<< "$picked"
+    adbs shell input tap "$x" "$y"
+    echo "tapped '$target' @ $x,$y" ;;
   text)
     ensure >/dev/null || exit 1
     do_dump || exit 1

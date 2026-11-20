@@ -95,11 +95,15 @@ class TrainingForegroundService : LifecycleService() {
             context.startForegroundService(Intent(context, TrainingForegroundService::class.java))
         }
 
+        /**
+         * 停止训练前台服务。
+         *
+         * 用 `stopService` 而不是 `startService(ACTION_STOP)` ——
+         * 后者会先走 onCreate→startForeground 再自我停止，
+         * 用户在通知栏会看到通知闪一下。
+         */
         fun stop(context: Context) {
-            context.startService(
-                Intent(context, TrainingForegroundService::class.java)
-                    .setAction(ACTION_STOP),
-            )
+            runCatching { context.stopService(Intent(context, TrainingForegroundService::class.java)) }
         }
     }
 }
