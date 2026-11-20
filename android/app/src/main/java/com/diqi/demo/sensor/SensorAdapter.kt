@@ -21,6 +21,14 @@ data class SensorSnapshot(
     val elapsedSec: Int = 0,
     /** 人脸是否在框内 */
     val faceInFrame: Boolean = false,
+    /**
+     * 人脸已连续丢失的毫秒数（0 表示在框内）。
+     *
+     * 这个值必须由**数据源真实累计**，不能由消费方拍一个常量。
+     * 首版训练页直接用 `FACE_LOST_NO_DATA_MS` 常量判"到阈值了"，
+     * 于是"3 秒"这条规则在真实链路上从来没有被真正计量过（AC-16 的形式主义）。
+     */
+    val faceLostMs: Long = 0L,
     /** 光照是否充足 */
     val lightOk: Boolean = true,
 ) {
@@ -130,6 +138,10 @@ class DemoSensor(
     @Volatile
     private var started = false
 
+    /** 人脸丢失的起始时刻（单调时钟），用于真实累计 faceLostMs */
+    @Volatile
+    private var faceLostSinceMs: Long = 0L
+
     override suspend fun start() {
         started = true
     }
@@ -153,13 +165,17 @@ class DemoSensor(
 
         // 故障注入（仅演示模式）：让 AC-16/17 的界面切换能在真机上被验证
         when (DemoFault.current) {
-            DemoFault.Kind.FACE_LOST -> return SensorSnapshot(
+            DemoFault.Kind.FACE_LOST -> {
+                if (faceLostSinceMs == 0L) faceLostSinceMs = android.os.SystemClock.elapsedRealtime()
+                return SensorSnapshot(
                 state = QualityState.NO_DATA,
                 isSimulated = true,
                 elapsedSec = nowElapsedSec,
-                faceInFrame = false,
-                missingReason = MissingReason.FACE_LOST,
-            )
+                    faceInFrame = false,
+                    faceLostMs = android.os.SystemClock.elapsedRealtime() - faceLostSinceMs,
+                    missingReason = MissingReason.FACE_LOST,
+                )
+            }
             DemoFault.Kind.LOW_LIGHT -> return SensorSnapshot(
                 state = QualityState.DEGRADED,
                 heartRateBpm = hrBase,
@@ -181,6 +197,9 @@ class DemoSensor(
             )
             DemoFault.Kind.NONE -> Unit
         }
+
+        // 故障解除：重置丢失计时
+        faceLostSinceMs = 0L
 
         // 用正弦做可见的、可预测的变化，方便演示时讲解"数值会随呼吸起伏"
         val t = nowElapsedSec.toFloat()

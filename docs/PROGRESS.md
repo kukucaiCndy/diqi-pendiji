@@ -641,3 +641,21 @@ battery 24.8℃ / CPU0 44.9℃ / CPU1 42.6℃
 （`CameraController` 目前只报 faceInFrame，不累计时长；训练页用常量直接判到阈值）。
 所以 AC-16 的"3 秒"是**规则层 + 呈现层**都验过了，唯独"真实 3 秒计时"这一环
 还缺——需要把逐帧累计接上（下一轮）。
+
+### 补：`faceLostMs` 变成真实计量（AC-16 的形式主义修正）
+
+上一轮承认"3 秒累计还没有生产者"。这轮补上了：
+
+| 层 | 改动 |
+| --- | --- |
+| `SensorSnapshot` | 新增 `faceLostMs`，语义是"人脸已连续丢失的毫秒数" |
+| `DemoSensor` | 注入 `FACE_LOST` 时记录起始时刻，按单调时钟**真实累计**；故障解除即重置 |
+| `FaceAnalyzer` | 逐帧累计：检到脸时更新 `lastFaceSeenAtMs`，未检到时算差值；从未检到则从首帧算起 |
+| `QualityGate` | `faceLostMs` 形参默认改为 `snapshot.faceLostMs`（不再由消费方拍常量） |
+| `TrainingViewModel` | 删掉 `FACE_LOST_SIMULATED_MS` 常量，直接用快照里的真实值 |
+| 测试 | `QualityGateTest` 新增 3 项：真实 2s 不切状态 / 真实 3.05s 切 NO_DATA / 显式入参优先 |
+
+这样一来 AC-16 的"3 秒"在**规则层（单测）、生产者层（真实累计）、呈现层（仪器化渲染）**
+三段都有证据，而不是靠一个常量假装达成。
+
+单测 134 项 / 0 失败；仪器化 32 项 / 0 失败。

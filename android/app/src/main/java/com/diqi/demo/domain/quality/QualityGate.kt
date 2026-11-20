@@ -59,7 +59,7 @@ object QualityGate {
      */
     fun evaluate(
         snapshot: SensorSnapshot,
-        faceLostMs: Long = 0L,
+        faceLostMs: Long = snapshot.faceLostMs,
         lightOk: Boolean = snapshot.lightOk,
         sqiThreshold: Float = DEFAULT_SQI_THRESHOLD,
     ): Verdict {

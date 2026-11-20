@@ -27,6 +27,8 @@ data class FaceFrame(
     /** 人脸中心相对画面中心的偏移（-1..1），用于"请靠近/后退"提示 */
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
+    /** 人脸已连续丢失的毫秒数（0 表示在框内）。由分析器逐帧真实累计。 */
+    val faceLostMs: Long = 0L,
 )
 
 /**
@@ -59,6 +61,14 @@ class FaceAnalyzer(
 
     private val busy = AtomicBoolean(false)
     private var lastFrameAtMs = 0L
+
+    /** 最近一次"检到人脸"的时刻（单调时钟）。用于真实累计 faceLostMs。 */
+    @Volatile
+    private var lastFaceSeenAtMs = 0L
+
+    /** 分析器启动后的首帧时刻 */
+    @Volatile
+    private var firstFrameAtMs = 0L
 
     @Volatile
     private var released = false
@@ -102,14 +112,27 @@ class FaceAnalyzer(
         // 取**最大人脸**：多人入镜时以最近的那个人为准（需求 §5.2 FR-07）
         val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
         if (face == null) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            // 首次丢失时记下起点；持续丢失则累计
+            val lostMs = if (lastFaceSeenAtMs == 0L) {
+                // 从来没检到过脸：从开始分析算起
+                if (firstFrameAtMs == 0L) firstFrameAtMs = now
+                now - firstFrameAtMs
+            } else {
+                now - lastFaceSeenAtMs
+            }
             onFrame(
                 FaceFrame(
                     faceFound = false,
                     brightness = averageBrightness(bitmap),
+                    faceLostMs = lostMs,
                 ),
             )
             return
         }
+
+        // 检到脸：重置丢失计时
+        lastFaceSeenAtMs = android.os.SystemClock.elapsedRealtime()
 
         val box = face.boundingBox
         val frameArea = (bitmap.width * bitmap.height).toFloat().coerceAtLeast(1f)
@@ -134,6 +157,7 @@ class FaceAnalyzer(
                 // 前置镜像是左右翻转的，提示方向要取反才符合用户直觉
                 offsetX = -cx,
                 offsetY = cy,
+                faceLostMs = 0L,
             ),
         )
     }

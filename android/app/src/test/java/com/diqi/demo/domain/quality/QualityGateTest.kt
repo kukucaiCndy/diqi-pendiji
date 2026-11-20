@@ -134,6 +134,40 @@ class QualityGateTest {
         assertFalse(v.showNumbers)
     }
 
+    // ── faceLostMs 必须来自快照的真实累计 ────────────────────────────────
+
+    @Test
+    fun 快照里的真实丢失时长会被采纳_不足三秒不切状态() {
+        val v = QualityGate.evaluate(
+            snap().copy(faceInFrame = false, faceLostMs = 2_000L),
+        )
+        assertEquals(
+            "2 秒丢失不应切 NO_DATA（AC-16 的分界就在 3 秒）",
+            QualityState.VALID,
+            v.state,
+        )
+        assertTrue(v.dimmed)
+    }
+
+    @Test
+    fun 快照里的真实丢失时长达到三秒判_NO_DATA() {
+        val v = QualityGate.evaluate(
+            snap().copy(faceInFrame = false, faceLostMs = 3_050L),
+        )
+        assertEquals(QualityState.NO_DATA, v.state)
+        assertEquals(MissingReason.FACE_LOST, v.reason)
+    }
+
+    @Test
+    fun 显式传入的丢失时长优先于快照字段() {
+        // 便于测试与将来"上层另行计时"的场景
+        val v = QualityGate.evaluate(
+            snap().copy(faceLostMs = 0L),
+            faceLostMs = 5_000L,
+        )
+        assertEquals(QualityState.NO_DATA, v.state)
+    }
+
     @Test
     fun 质量三点指示与四态对应() {
         assertEquals(3, QualityGate.qualityDots(QualityState.VALID))
