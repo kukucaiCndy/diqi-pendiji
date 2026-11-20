@@ -1,0 +1,17 @@
+.DS_Store
+.idea/
+*.iml
+
+# Gradle / Android
+.gradle/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.hprof
+
+# 本地环境
+*.log
