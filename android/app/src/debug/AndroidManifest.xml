@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 构建合并进来的清单。
+
+  DebugSeedReceiver 必须 exported=true：`adb shell am broadcast` 在非 root 下
+  无法投递给 non-exported 接收器。因为它只存在于 debug source set，
+  release APK 里不会有这个入口 —— 这比"运行时用 BuildConfig 判断"更安全。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!--
+          tools:ignore="ExportedReceiver"：这个接收器本来就只该在 debug 包存在，
+          且 adb 广播在非 root 下必须能打到它。真正的防线是 source set 隔离 ——
+          release 包里没有这个类。
+        -->
+        <receiver
+            android:name=".debug.DebugSeedReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="com.diqi.demo.DEBUG_SEED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

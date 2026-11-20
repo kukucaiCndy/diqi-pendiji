@@ -5,29 +5,43 @@
 
 | AC | 预期 | 阶段 | 验证手段 | 判据 | 自动化 | 已知局限 |
 | --- | --- | --- | --- | --- | --- | --- |
-| AC-01 | 跳过摄像头完成一次训练，完成页出现、记录可查 | S5 | `tools/e2e.sh` 按 tag 驱动 → 完成页截图 → `db-pull.sh` | 完成页 tag 存在；DB `TrainingSession` count==1 且 `sensorMode='null'` | A | — |
+| AC-01 | 跳过摄像头完成一次训练，完成页出现、记录可查 | S5 | 先 `e2e.sh clear-data-all` 清场 → 按 tag 驱动 → 完成页截图 → `e2e.sh sql` | 完成页 tag 存在；`countRealBetween(今日)`==1 且该行 `sensorMode='null'`。**不用 `countAll`**：它会把演示与历史记录算进来 | A | 判据必须用带过滤的区间计数，勿用裸 count |
 | AC-02 | 暂停 10s 恢复，计时/计数冻结、恢复无跳变 | S3+S5 | `TrainingEngineTest` + 真机暂停 10s 截图前后 | 单测：`pausedMs≈10000±50`，恢复后 `phaseRemaining` 与暂停前差值 ≤100ms；真机两次截图倒计时一致 | A | 真机部分为截图判读 |
 | AC-03 | 飞行模式 + 不开摄像头全流程正常 | S9 | `svc data disable` + 全流程驱动 + 静态网络审计 | 流程无异常；`grep` 全工程仅 SDK 激活路径持有网络调用 | C | **未真正关 WiFi**（会切断 adb 自身），属代理验证，需真人补一次真实飞行模式 |
 | AC-04 | 拒绝相机仍可训练，指标区显示「未启用感知」 | S6 | `pm revoke CAMERA` → 进入训练 → 截图 | 训练可完成；指标区文本 == 「未启用感知」；无任何数字节点 | A | — |
 | AC-05 | 锁屏 30s 返回，进度误差 ≤1s，指标恢复 | S5+S6 | `KEYCODE_POWER` → `sleep 30` → 唤醒 → 截图 + `logcat` | `phaseRemaining` 与理论值差 ≤1000ms；返回后指标区 3s 内退出「信号暂失」 | A | 指标恢复依赖 `SensorCoordinator` 窗口保留（D12）；真实 SDK 未验证 |
 | AC-06 | 来电打断音频，训练不中断，后续提示正常 | S3+S5 | 音频焦点抢占：`AudioManager` 请求 `AUDIOFOCUS_LOSS_TRANSIENT` 的测试入口 + 真人拨号 | 训练状态机 state 不变；被抢那句跳过；下一阶段语音正常播放 | B | 真机无 `cmd telecom` 注入通道，无法脚本模拟来电 |
 | AC-07 | 第 3 次收缩点结束 → `completedReps=2`，不补造 | S3+S5 | 单测 + 真机在第 3 次 Contract 中点结束 | `completedReps==2`（非 3）；DB 字段一致 | A | — |
-| AC-08 | 连点两次完成 → 仅一条记录 | S7 | instrumented 双击 + `db-pull.sh` | `count(TrainingSession)==1`；按钮第二次点击为 no-op | A | — |
+| AC-08 | 连点两次完成 → 仅一条记录 | S7 | instrumented 双击 + `tools/e2e.sh sql` | `count(TrainingSession)==1`；按钮第二次点击为 no-op | A | — |
 | AC-09 | 系统字体最大档浏览全部页面无截断/重叠 | S9 | `settings put system font_scale 1.3` 与 `2.0` + `am force-stop` 重启 → 逐页截图 | 每页截图人工判读无截断/重叠（Compose **不产出** Layout 溢出日志，不能以此为判据）；关键按钮仍可见可点 | B | 只能人工判读；已从 Manifest 的 `configChanges` 移除 `fontScale`，确保重建路径被真正触发 |
 | AC-10 | TalkBack 完成一次训练 | S9 | `uiautomator dump` 全量断言 `content-desc` 覆盖率 + 人工 | 可点元素 `content-desc` 非空率 100%；主流程控件均有语义 | C | **本机无 TalkBack**（`pm list packages` 无），运行时流程无法验，如实标注 |
 | AC-11 | 选「有不适」→ 就医提示，无加量建议 | S7 | 驱动选择「有不适」→ 截图 | 截图含就医/停止提示；**不含**「继续加量/加大」等词 | A | — |
-| AC-12 | 3 天记录 → 七天页数字一致，Day 进度正确 | S7 | `DEBUG_SEED days=3` → 截图 + `db-pull.sh` | 日历 3 点；累计时长/次数与 DB 聚合一致；`dayIndex` 正确 | A | 造数靠 debug 广播（无 root 改系统时间） |
+| AC-12 | 3 天记录 → 七天页数字一致，Day 进度正确 | S7 | `DEBUG_SEED days=3` → 截图 + `tools/e2e.sh sql` | 日历 3 点；累计时长/次数与 DB 聚合一致；`dayIndex` 正确 | A | 造数靠 debug 广播（无 root 改系统时间） |
 | AC-13 | 训练中被杀进程 → 重新打开提供继续/丢弃，无脏记录 | S5 | `am force-stop` → 重启 → 截图 | 出现「继续/丢弃」对话框；选「丢弃」后 DB 无半条记录 | A | — |
 | AC-14 | 文案检索无禁词；指标区免责说明存在 | S9 | `tools/scan-banned.sh` + instrumented | grep 命中 0；UI 断言免责文本与「节律提示」存在 | A | 语义级禁令（心率≠收缩）靠文案白名单人工评审 |
 | AC-15 | 开相机前 30s 显示「信号建立中」，无数字 | S6 | 进入训练 → 30s 内多次截图 | 指标区文本 == 「信号建立中」；无 `\d{2,3}` 数字节点 | A | 真实 SDK 未接，用桩 + Demo 的 30s 门限验证 |
 | AC-16 | 遮脸 5s → 3s 内变 NO_DATA，节律继续 | S6 | `DemoSensor.injectFaceLost()` + 真机物理遮挡（人工） | 故障注入后 ≤3s 指标区转「信号暂失」；训练 state 不变 | B | 物理遮挡无法脚本，逻辑路径已注入覆盖 |
 | AC-17 | 强光/逆光 → 校准页提示光照问题 | S6 | `injectLowLight()` + 真机物理（人工） | 校准页出现「光线不足」提示条；非训练后报错 | B | 同上 |
 | AC-18 | 连续进出训练页 5 次不崩溃、无相机占用异常 | S6 | 脚本循环 5 次 + `logcat` 过滤 | 无 `FATAL`；无 `CameraDevice`/`ImageProxy` 泄漏日志；第 6 次进入正常 | A | — |
-| AC-19 | 演示模式：全屏水印；记录标 simulated；不计入打卡与周报 | S6+S8 | 开演示跑一次 → 截图 + `db-pull.sh` + 周报截图 | 水印节点存在；DB `mode='simulated'`；打卡天数不变；周报不含该次 | A | D9 裁定：写库但过滤；记录页独立「演示记录」区带水印展示 |
+| AC-19 | 演示模式：全屏水印；记录标 simulated；不计入打卡与周报 | S6+S8 | 开演示跑一次 → 截图 + `tools/e2e.sh sql` + 周报截图 | 水印节点存在；DB `mode='simulated'`；打卡天数不变；周报不含该次 | A | D9 裁定：写库但过滤；记录页独立「演示记录」区带水印展示 |
 | AC-20 | 首次走完 Day1 → 首页 Day1 主题；完成后进 Day2 | S4 | 清数据 → 走 Day1 → 截图 | 首页文本含「Day 1」；完成后含「Day 2」 | A | — |
 | AC-21 | 未开启分享 → 只能预览，不能直接发送 | S8 | 打开周报 → 截图 | 分享按钮 disabled；无隐式发送 | A | — |
 | AC-22 | 分享面板仅天数/时长，无心率和日记 | S8 | 点分享 → 截图系统面板 | 分享文本仅含天数与时长；`ShareCardBuilder` 单测断言无 `bpm/心率/呼吸/HRV/漏尿` | B | 系统面板需截图判读 |
-| AC-23 | 漏尿日记全部跳过 → 可完成，不写脏数据 | S7 | 驱动全跳过 → `db-pull.sh` | `LeakDiaryEntry` count==0（或 `skipped=1`）且无空记录 | A | — |
+| AC-23 | 漏尿日记全部跳过 → 可完成，不写脏数据 | S7 | 驱动全跳过 → `tools/e2e.sh sql` | `LeakDiaryEntry` count==0（或 `skipped=1`）且无空记录 | A | — |
+
+---
+
+## §6 数据模型偏离裁定（需产品确认）
+
+| 需求 §6 条目 | 实际实现 | 理由 | 风险 |
+| --- | --- | --- | --- |
+| `DailyProgress`：`date`/`dayIndex`/`completed`/`sessions`/`totalSec` | **不建表**，由 `ProgressRepository` 从 `training_session` 派生（`WeekSummary` + `currentDayIndex`） | 存冗余统计必然与明细不一致（漏写、重复写、演示数据漏过滤三处都可能出错）。派生只有一个真相源 | 如果将来要做"历史快照"（例如改参数后回看当天状态），需要重新引入；目前无此需求 |
+| `SensorQuality.validRatio` 等 | 语义定为**时长占比** | 需求 §6 原文写「各状态**时长**占比」 | 生产者（QualityGate）还没实现，S6 落地时必须按此时长口径写入，并由 `QualitySummary` 的"和≈1"校验兜住 |
+| `Consent` 独立表 | 与 `AppSettings` 合并进同一个 DataStore 文件，用字段语义区分 | 读写场景完全重叠；拆两个 DataStore 有同名多实例初始化竞态风险 | 「清除数据」必须区分范围：`clearBusinessSettings()` 保留同意与筛查留痕，`clearEverythingForTests()` 才全清 |
+
+> `SensorQuality` 不加冗余 `sensorMode` 列，改为**跨会话聚合必须 JOIN `training_session`** ——
+> 冗余列会引入"两处 sensorMode 可能不一致"的新失效面。由 `SimulatedFilterTest`
+> 与 `HerRhythmDaoTest.质量均值只统计真实会话` 双重守卫。
 
 ---
 

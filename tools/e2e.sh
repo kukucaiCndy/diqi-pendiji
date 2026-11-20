@@ -25,6 +25,8 @@
 #   tools/e2e.sh fontscale <v>      设置系统字体缩放并重启进程
 #   tools/e2e.sh wake               唤醒屏幕、解除锁屏、关闭超时休眠
 #   tools/e2e.sh logs [filter]      清空并跟踪 logcat
+#   tools/e2e.sh seed [days N]      造 N 天历史记录（仅 debug 构建）
+#   tools/e2e.sh clear-data-all     清空业务数据（仅 debug 构建）
 #   tools/e2e.sh ensure             自检设备连通，掉线自动重连
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
@@ -144,7 +146,23 @@ dbpull() {
         echo "[e2e] 未找到主数据库，现有文件：$names" >&2
         return 1
     fi
-    echo "$DBDIR/$main"
+    # 拉完必须校验，否则 run-as 失败 / 只拉到空主库时会得到"空库"，
+    # sqlite3 报 no such table，AC 被判成**假 FAIL**（评审 F2）。
+    local target="$DBDIR/$main"
+    if [[ ! -s "$target" ]]; then
+        echo "[e2e] 主库文件为空：$target" >&2
+        return 1
+    fi
+    if [[ "$(head -c 15 "$target" 2>/dev/null)" != "SQLite format 3" ]]; then
+        echo "[e2e] 主库文件头不是 SQLite（可能被截断）" >&2
+        return 1
+    fi
+    local check
+    if ! check="$(python3 "$ROOT/tools/dbcheck.py" "$target")"; then
+        echo "[e2e] 数据库校验失败：$check" >&2
+        return 1
+    fi
+    echo "$target"
 }
 
 cmd="${1:-help}"; shift || true
@@ -275,6 +293,16 @@ PY
   logcatch)
     ensure >/dev/null || exit 1
     adbs logcat -d -v brief "${1:-*:W}" ;;
+  seed)
+    ensure >/dev/null || exit 1
+    # 必须用**显式组件**：本机 Android 15 上按 action 的隐式广播不会投递给
+    # manifest 接收器（实测 "Broadcast completed: result=0" 但 onReceive 从未执行）。
+    adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \
+        -a com.diqi.demo.DEBUG_SEED "$@" ;;
+  clear-data-all)
+    ensure >/dev/null || exit 1
+    adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \
+        -a com.diqi.demo.DEBUG_SEED -e action clear ;;
   force-stop)
     ensure >/dev/null || exit 1
     adbs shell am force-stop "$PKG" ;;

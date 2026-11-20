@@ -86,3 +86,76 @@
 - **本机无 TalkBack**，AC-10 的运行时流程无法验证。
 - **`mediaPlayback` 前台服务在 RedMagicOS 上的实际存活行为**未验证（S5 验证）。
 - **设计稿字号与需求的冲突**按需求执行（D6），因此设计稿的视觉密度未逐像素还原。
+---
+
+## S2 · 数据层 + 七天内容 + 设置/同意 + 造数入口 ✅ 完成
+
+### 交付物
+
+| 类别 | 内容 |
+| --- | --- |
+| Room | 3 实体（`TrainingSession` 18 字段 / `SensorQuality` / `LeakDiary`）+ 3 DAO + `HerRhythmDb`（schema 导出到 `app/schemas/`） |
+| DataStore | `AppSettingsStore`：设置 + 同意 + 筛查合并一份，含 `.catch` 容错 |
+| 领域 | `TrainingParams`（§5.4 全 12 项 + `validate()` + `Locale.ROOT` 内容哈希）、`TrainingPhase`/`TrainingFrame`/`EngineSnapshot`、`SevenDayPlan`（Day1–7 内容 + 按首次完成日起算） |
+| 仓储 | `SessionRepository`（唯一写入入口 + 事务 + 覆盖率门限强制）、`ProgressRepository`、`LeakDiaryRepository` |
+| 造数 | `DebugSeedReceiver`（**仅 debug source set**，`goAsync` + 异常日志） |
+
+### 端到端证据
+
+| 项 | 结果 |
+| --- | --- |
+| Room KSP 代码生成 | ✅ 4 个 `_Impl.kt` + `schemas/.../1.json`（评审点名的 S2 头号风险已清除） |
+| 单测 | ✅ **80 项 / 0 失败**（8 个测试类，含 app 65 + facephys-api 15） |
+| 仪器化 | ✅ **22 项 / 0 失败**（20 项真库 DAO 测试 + 2 项冒烟） |
+| 造数 → 拉库 → 读回 | ✅ `seed days 3` → `e2e.sh sql` 读到 3 条，日期正确 |
+| WAL 合并 | ✅ 最新写入（今天 20:00 那条）在只拉 `.db` 时也能读到 —— 证明按原名拉取 + 同目录放置的修复有效 |
+| 杀进程持久化 | ✅ `force-stop` 后重启，5 条记录仍在 |
+| 冷启动 | ✅ 812–852 ms |
+
+### CodeReview（3 路编排）发现与处置
+
+**已修复（22 项）**
+
+| # | 问题 | 级别 | 处置 |
+| --- | --- | --- | --- |
+| 1 | **`REPLACE` 触发 `ON DELETE CASCADE`，自评回填会静默删掉质量汇总行**（用 sqlite3 复现） | P0 | 训练表改 `@Upsert`；加了真库测试 `自评回填不会删掉质量汇总行` |
+| 2 | 保存与自评回填都不在事务里（写两表 / 读-改-写） | P0 | 全部包进 `withTransaction` |
+| 3 | 撤销相机同意时删掉 `consentedAt`，"从未同意"与"同意后撤销"无法区分 | P0 | 保留 `consentedAt`，只追加 `revokedAt`，新增 `cameraConsentActive` 判定 |
+| 4 | `clearAll()` 连同意与筛查留痕一起抹掉（"清除数据"= 销毁合规证据） | P0 | 拆成 `clearBusinessSettings()`（保留留痕）与 `clearEverythingForTests()` |
+| 5 | `SensorQuality` 无 `sensorMode`，跨会话质量统计会把演示会话算进去；且原测试把这个缺口**反向锁死**了 | P0 | 加 `averageValidRatioRealBetween`（INNER JOIN 过滤），删掉反向断言 |
+| 6 | AC-19 守卫只扫 `Daos.kt` 单文件 + 正则漏多行写法 → 假通过 | P0 | 改为扫描 `src/main` 全部 Kotlin + 注释剥离 + 括号配平扫描器 + **每个 DAO 必须显式分类** |
+| 7 | 覆盖率门限只做数值比较：传 60（百分比）会原样入库；`simulated`/`off` 会话覆盖率达标也能带心率 | P1 | `coerceIn(0,1)` + **只有 `OFFLINE_SDK` 才允许带指标** |
+| 8 | DAO/Repository 的真实 SQL 一次都没被执行过 | P1 | 新增 20 项真库仪器化测试（in-memory Room） |
+| 9 | "仅统计 ≥60s"只写在注释里，SQL 无门槛 → 3 秒误触会污染打卡/时长/Day 进度 | P1 | 5 处统计查询全部加 `durationMs >= 60000`，并加测试断言门槛真的在 SQL 里 |
+| 10 | 统计时长用墙钟差推导，训练中校时会跳变（甚至为负） | P1 | 新增 `durationMs`（单调时钟写入），统计只认它；`startedAt` 加 `require` 必须是墙钟量级 |
+| 11 | 种子用 `clearSimulated()` 清理，但种子是真实模式 → 跨天重复造数会累积并计入统计 | P1 | 新增 `clearSeeds()`（按 `seed-day-%` 前缀），种子时间戳压到「不晚于现在」 |
+| 12 | 种子质量占比写 0/0/0 却配 `NO_DATA`，消费方无法区分"数据缺失"与"真是 0" | P2 | 改为 `invalidRatio = 1.0` |
+| 13 | `SessionDraft.id` 有 `UUID.randomUUID()` 默认值 → AC-08 只在"复用同一 draft"时成立 | P1 | 去掉默认值，编译期逼调用方在训练开始时持有 id |
+| 14 | `TrainingParams.hash()` 用默认 Locale → 换系统语言后同一参数产出不同 planVersion | P2 | 改 `Locale.ROOT` |
+| 15 | `clinicalNoticeRequired` 在筛查未答完时返回 false（漏答反而更放行） | P1 | 改为 `!isComplete \|\| q2==YES \|\| q3==YES` |
+| 16 | 两条独立需求被德摩根化简成逐字相同的表达式，改一处会静默影响另一处 | P2 | 各自显式书写，加真值表测试 |
+| 17 | `setScreening` 不删旧键 → 重做筛查时上一轮答案越过本次"未答"写回；未答完也会拿到"已确认"时间戳 | P1 | 先 `remove` 四个键，`safetyAcknowledgedAt` 仅在整个筛查完成时落 |
+| 18 | `Float.coerceIn` 挡不住 NaN，读取路径也不 clamp → 非法语速直进 `PlaybackParams` 会抛异常 | P1 | 读写两侧都 `takeIf { isFinite() }`；`reminderTime` 读写都校验 `HH:mm` |
+| 19 | DataStore 读 Flow 无 `.catch` → 一次 IO 异常让首屏永远拿不到设置 | P1 | 加 `.catch`：`IOException` 时发出空偏好 |
+| 20 | 漏尿日记 `frequency` 是非空裸 String，跳过的行被迫编造频次 | P2 | 改 enum（`LeakFrequency`/`LeakContext`）+ 可空 + `init` 不变式 |
+| 21 | 七天文案的禁词表在测试里自建，与全局词表分叉（「康复」全局不设防） | P2 | 测试改用 `BannedWords.scan`；`康复` 并入全局词表与扫描脚本 |
+| 22 | `e2e.sh` 取库无任何校验（run-as 失败会拿到空库 → sqlite 报 no such table → AC 假 FAIL） | P1 | 拉完校验文件头 + `PRAGMA integrity_check`（`tools/dbcheck.py`） |
+
+**未修 / 需产品决策（3 项）**
+
+| 项 | 说明 |
+| --- | --- |
+| 「清除数据」的产品语义 | 已按"清业务设置、保留同意与筛查留痕"实现（合规优先）。若产品认为该按钮应等于"恢复出厂"，需改回并接受"用户可一键销毁同意证据" |
+| `DailyProgress` 不建表 | 已写入 `docs/AC-MATRIX.md` 的「§6 数据模型偏离裁定」，需产品确认派生实现可接受 |
+| `validRatio` 语义 | 按需求原文取**时长占比**；生产者（`QualityGate`）在 S6 落地，届时须按此时长口径写入 |
+
+### 运维注意（真实踩坑）
+
+**跑 `connectedDebugAndroidTest` 会卸载应用并清空数据**。之后必须重新 `e2e.sh install` + 重新造数，
+否则会看到"databases/ 为空"的假象。
+
+### 如实标注的未验证项
+
+- **`QualityGate`（质量四态判定）尚不存在**，所有 `validRatio`/`lastState` 目前只有种子与测试写入，真实生产者待 S6。
+- **所有筛查派生属性与 `shareEnabled` 目前零消费者** —— FR-01 的常驻提示条、完成页结论抑制、FR-13 分享守卫会在 S4/S8 接上，届时必须重审。
+- **`ProgressRepository`/`LeakDiaryRepository` 尚无 UI 调用方**，其端到端表现（AC-12/23）在 S7 才能真验。

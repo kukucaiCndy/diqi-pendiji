@@ -20,7 +20,7 @@ INCLUDE_TESTS=0
 
 # 与 core/text/BannedWords.kt 的 WORDS 保持一致。
 # 用更宽的词干覆盖（例如「治愈」而非「治愈率」），避免只抓到复合词。
-PATTERN='盆底肌力|肌力|动作正确率|收缩正确率|动作标准|治愈|显著改善|疗效|血压|血氧|情绪|心理评分|HRV|已学会'
+PATTERN='盆底肌力|肌力|动作正确率|收缩正确率|动作标准|治愈|康复|显著改善|疗效|血压|血氧|情绪|心理评分|HRV|已学会'
 
 EXCLUDE_ARGS=(
   --exclude-dir=build
