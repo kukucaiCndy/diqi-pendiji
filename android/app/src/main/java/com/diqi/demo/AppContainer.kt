@@ -116,7 +116,7 @@ class AppContainer(private val app: Application) : com.diqi.demo.training.Traini
      *
      * 注意引擎是 app-scoped 的，所以这里不再需要外部传入 viewModelScope。
      */
-    override fun obtainSession(params: TrainingParams): TrainingSessionCoordinator =
+    override fun obtainSession(params: TrainingParams): com.diqi.demo.training.TrainingSession =
         obtainTrainingSession(params)
 
     override suspend fun currentSettings(): com.diqi.demo.data.prefs.AppSettings =

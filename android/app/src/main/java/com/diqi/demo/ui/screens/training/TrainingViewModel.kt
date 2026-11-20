@@ -75,7 +75,7 @@ class TrainingViewModel(
      *
      * 这样锁屏/重建时引擎状态不丢，AC-05「进度误差 ≤1s」才成立。
      */
-    private val coordinator: TrainingSessionCoordinator = container.obtainSession(params)
+    private val coordinator: com.diqi.demo.training.TrainingSession = container.obtainSession(params)
 
     private val _state = MutableStateFlow(TrainingUiState(params = params))
     val state: StateFlow<TrainingUiState> = _state.asStateFlow()
@@ -149,7 +149,7 @@ class TrainingViewModel(
             if (!ok) {
                 // 参数变了：不能继续，只能丢弃
                 container.snapshots.clear()
-                coordinator.start()
+                coordinator.start(System.currentTimeMillis())
             }
             _state.value = _state.value.copy(pendingRecovery = null)
             observeFrames()
@@ -171,7 +171,7 @@ class TrainingViewModel(
         started = true
         sessionStartedAtMs = System.currentTimeMillis()
         viewModelScope.launch { sensor.start() }
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         observeFrames()
     }
 

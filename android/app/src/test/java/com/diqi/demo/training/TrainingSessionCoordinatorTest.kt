@@ -107,7 +107,7 @@ class TrainingSessionCoordinatorTest {
     @Test
     fun 阶段变化时才播语音_不会每帧重复() {
         init()
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         // start() 内已同步 emit 第一帧 → 应播过一次 PREP
         assertEquals(1, voice.played.count { it == VoiceScript.PREP })
 
@@ -126,7 +126,7 @@ class TrainingSessionCoordinatorTest {
     @Test
     fun 暂停会播暂停语音且时间冻结() {
         init()
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         clock.advance(params.prepMs)
         coordinator.pause()
 
@@ -140,7 +140,7 @@ class TrainingSessionCoordinatorTest {
     @Test
     fun 结束后完成次数不补造() {
         init()
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         clock.advance(params.prepMs + params.cycleMs * 2 + 2_000L)
         coordinator.stop()
 
@@ -166,7 +166,7 @@ class TrainingSessionCoordinatorTest {
     @Test
     fun 从快照恢复后剩余时间与快照一致() {
         init()
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         clock.advance(params.prepMs + 3_000L)
         coordinator.pause()
         val snap = awaitSnapshot() ?: error("暂停后应有快照")
@@ -194,7 +194,7 @@ class TrainingSessionCoordinatorTest {
     @Test
     fun 参数变更后恢复被拒绝_应提示丢弃() {
         init()
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         clock.advance(params.prepMs)
         coordinator.pause()
         val snap = awaitSnapshot() ?: error("暂停后应有快照")
@@ -216,7 +216,7 @@ class TrainingSessionCoordinatorTest {
     @Test
     fun 结束训练会清空快照_避免下次误提示继续() {
         init()
-        coordinator.start()
+        coordinator.start(System.currentTimeMillis())
         clock.advance(params.prepMs)
         coordinator.pause()
         assertNotNull(awaitSnapshot())
@@ -279,7 +279,7 @@ class TrainingSessionCoordinatorTest {
             scope = scope,
             params = params,
         )
-        coord.start()
+        coord.start(System.currentTimeMillis())
         coord.release()
 
         assertFalse("会话结束时不得 release 全局语音单例", spy.released)

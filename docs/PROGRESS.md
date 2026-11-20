@@ -823,3 +823,33 @@ elapsedActiveMs / pausedMs / pauseCount / start / release / currentFrame` 的最
 前者的成本更低、也更符合"单元测试只测这一个单元"的原则。
 
 这是本轮**没做成**的事，不做粉饰。
+
+---
+
+## S9 补充 7 · `TrainingViewModel` 测试**补上了**（144 项全绿）
+
+上一轮「抽了 `TrainingDeps` 但测试挂死」。这一轮解决了，关键是把依赖**再抽一层**：
+
+| 层 | 改动 |
+| --- | --- |
+| `TrainingSession` | 新接口，把 VM 用到的 15 个成员列出来；`TrainingSessionCoordinator` 实现它 |
+| `TrainingDeps.obtainSession` | 返回类型改为 `TrainingSession`（不再是具体协调器） |
+| 测试 | 注入 `StubSession`：`frames` 由测试手动 emit，写操作只记调用 —— **不带 ticker**，所以不会有虚拟时间无限推进的问题 |
+
+**9 项新测试（全部 JVM，无需设备）**：
+
+1. 连点结束只保存一条记录 → **AC-08**
+2. 保存的会话 id 与完成页展示一致
+3. 演示模式写入 `SIMULATED` → **AC-19**
+4. 非演示模式写入 `OFF`
+5. 有可恢复快照时弹窗且不自动开始 → **AC-13**
+6. 保存失败时不置 `finished` 并置 `saveFailed` → 失败提示必须可见
+7. 保存失败后点放弃才允许离开（并释放会话）
+8. 结束后点暂停不会乐观显示已暂停
+9. 暂停后界面状态与会话一致
+
+**过程中又踩到一个真问题**：第一版 `StubSession.pause()` 无条件 emit `PAUSED`，
+于是"结束后点暂停"用例反而失败。原因是真实引擎在已结束时 `pause()` 是**空操作**——
+桩不忠实，测的就不是产品行为。已在桩里写明并修正。
+
+结果：**单测 144 项 / 0 失败**。`AC-MATRIX` 里 AC-08 从 B 恢复为 A（现在 VM 层与数据层都有测试）。

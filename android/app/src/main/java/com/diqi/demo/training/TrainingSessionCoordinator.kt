@@ -46,10 +46,10 @@ class TrainingSessionCoordinator(
     val params: TrainingParams = engine.params,
     private val tickIntervalMs: Long = 100L,
     private val snapshotIntervalMs: Long = 10_000L,
-) {
+                                                      ) : TrainingSession {
 
     private val _frames = MutableStateFlow(TrainingFrame.idle(params.repsPerSet))
-    val frames: StateFlow<TrainingFrame> = _frames.asStateFlow()
+    override val frames: StateFlow<TrainingFrame> = _frames.asStateFlow()
 
     private var ticker: Job? = null
 
@@ -64,7 +64,7 @@ class TrainingSessionCoordinator(
 
     // ── 生命周期 ──────────────────────────────────────────────────────────
 
-    fun start(wallClockMs: Long = System.currentTimeMillis()) {
+    override fun start(wallClockMs: Long) {
         engine.start(wallClockMs = wallClockMs)
         lastSpokenPhase = null
         voice.play(com.diqi.demo.audio.VoiceScript.START)
@@ -74,7 +74,7 @@ class TrainingSessionCoordinator(
         restartTicker()
     }
 
-    fun pause() {
+    override fun pause() {
         engine.pause()
         voice.stop()
         voice.play(com.diqi.demo.audio.VoiceScript.PAUSE)
@@ -83,14 +83,14 @@ class TrainingSessionCoordinator(
         persistSnapshotAsync()
     }
 
-    fun resume() {
+    override fun resume() {
         engine.resume()
         restartTicker()
         emitFrame()
     }
 
     /** 用户主动结束：冻结时间（AC-07），落快照，停 tick。 */
-    fun stop() {
+    override fun stop() {
         engine.stop()
         voice.stop()
         stopTicker()
@@ -109,19 +109,19 @@ class TrainingSessionCoordinator(
      *
      * 语音的生命周期归容器；这里只 `stop()` 掉当前正在播的那句。
      */
-    fun release() {
+    override fun release() {
         stopTicker()
         voice.stop()
         persistSnapshotAsync()
     }
 
-    fun repeatVoice() {
+    override fun repeatVoice() {
         voice.playPhase(currentFrame().phase)
         lastVoiceAtMs = clock.nowMs()
     }
 
     /** 恢复中断的训练（AC-13）。返回 false 表示参数已变，应丢弃。 */
-    suspend fun restoreFrom(snapshot: EngineSnapshot): Boolean {
+    override suspend fun restoreFrom(snapshot: EngineSnapshot): Boolean {
         val ok = engine.restore(snapshot)
         if (ok) {
             lastSpokenPhase = null
@@ -131,19 +131,19 @@ class TrainingSessionCoordinator(
         return ok
     }
 
-    suspend fun pendingSnapshot(): EngineSnapshot? = snapshots.load()
+    override suspend fun pendingSnapshot(): EngineSnapshot? = snapshots.load()
 
-    fun currentFrame(): TrainingFrame = engine.frame(clock.nowMs())
+    override fun currentFrame(): TrainingFrame = engine.frame(clock.nowMs())
 
-    fun pauseCount(): Int = engine.pauseCount
+    override fun pauseCount(): Int = engine.pauseCount
 
-    fun pausedMs(): Long = engine.pausedMs(clock.nowMs())
+    override fun pausedMs(): Long = engine.pausedMs(clock.nowMs())
 
-    fun elapsedActiveMs(): Long = engine.elapsedActiveMs(clock.nowMs())
+    override fun elapsedActiveMs(): Long = engine.elapsedActiveMs(clock.nowMs())
 
-    fun startedAtWallMs(): Long = engine.wallClockAtStartMs ?: System.currentTimeMillis()
+    override fun startedAtWallMs(): Long = engine.wallClockAtStartMs ?: System.currentTimeMillis()
 
-    fun isFinished(): Boolean = engine.isFinished(clock.nowMs())
+    override fun isFinished(): Boolean = engine.isFinished(clock.nowMs())
 
     // ── 内部 ──────────────────────────────────────────────────────────────
 

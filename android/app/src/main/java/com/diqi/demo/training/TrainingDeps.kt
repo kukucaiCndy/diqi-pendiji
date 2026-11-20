@@ -38,7 +38,7 @@ interface TrainingDeps {
     fun sensorFor(demoMode: Boolean): SensorAdapter
 
     /** 取得（或新建）当前训练会话 */
-    fun obtainSession(params: TrainingParams): TrainingSessionCoordinator
+    fun obtainSession(params: TrainingParams): TrainingSession
 
     fun releaseSession()
 }
