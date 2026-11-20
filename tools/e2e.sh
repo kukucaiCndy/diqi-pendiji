@@ -27,6 +27,7 @@
 #   tools/e2e.sh wake               唤醒屏幕、解除锁屏、关闭超时休眠
 #   tools/e2e.sh logs [filter]      清空并跟踪 logcat
 #   tools/e2e.sh seed [days N]      造 N 天历史记录（仅 debug 构建）
+#   tools/e2e.sh demo [true|false]  切换演示模式（仅 debug 构建）
 #   tools/e2e.sh clear-data-all     清空业务数据（仅 debug 构建）
 #   tools/e2e.sh ensure             自检设备连通，掉线自动重连
 # ─────────────────────────────────────────────────────────────────────────────
@@ -339,6 +340,13 @@ PY
     # manifest 接收器（实测 "Broadcast completed: result=0" 但 onReceive 从未执行）。
     adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \
         -a com.diqi.demo.DEBUG_SEED "$@" ;;
+  demo)
+    ensure >/dev/null || exit 1
+    # 切换演示模式（S8 会有正式开关；在此之前用 debug 钩子验证 AC-19）
+    on="${1:-true}"
+    adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \
+        -a com.diqi.demo.DEBUG_SEED -e action demo --ez on "$on" >/dev/null
+    echo "demo=$on" ;;
   clear-data-all)
     ensure >/dev/null || exit 1
     adbs shell am broadcast -n "$PKG/.debug.DebugSeedReceiver" \

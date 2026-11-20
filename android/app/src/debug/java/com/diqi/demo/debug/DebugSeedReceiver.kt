@@ -68,6 +68,11 @@ class DebugSeedReceiver : BroadcastReceiver() {
                         container.settingsStore.clearEverythingForTests()
                         Log.i(TAG, "已清空全部数据")
                     }
+                    ACTION_DEMO -> {
+                        val on = intent.getBooleanExtra("on", true)
+                        container.settingsStore.setDemoMode(on)
+                        Log.i(TAG, "演示模式 = $on")
+                    }
                     ACTION_PROBE -> {
                         Log.i(TAG, "probe: sessions=${container.sessionRepository.recentReal(100).size}")
                     }
@@ -143,5 +148,6 @@ class DebugSeedReceiver : BroadcastReceiver() {
         const val ACTION_SEED = "seed"
         const val ACTION_CLEAR = "clear"
         const val ACTION_PROBE = "probe"
+        const val ACTION_DEMO = "demo"
     }
 }

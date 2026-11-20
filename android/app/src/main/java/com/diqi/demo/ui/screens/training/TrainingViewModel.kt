@@ -9,7 +9,10 @@ import com.diqi.demo.domain.training.EngineSnapshot
 import com.diqi.demo.domain.training.TrainingEngine
 import com.diqi.demo.domain.training.TrainingFrame
 import com.diqi.demo.domain.training.TrainingParams
+import com.diqi.demo.data.db.MissingReason
+import com.diqi.demo.domain.quality.QualityGate
 import com.diqi.demo.domain.training.TrainingStatus
+import com.diqi.demo.sensor.SensorAdapter
 import com.diqi.demo.training.TrainingSessionCoordinator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +43,8 @@ data class TrainingUiState(
     val voiceAvailable: Boolean = true,
     /** 保存失败（例如磁盘满）。UI 必须提示，不能静默。 */
     val saveFailed: Boolean = false,
+    /** 演示模式（FR-14）：为 true 时指标区必须渲染全屏水印 */
+    val demoMode: Boolean = false,
 )
 
 /**
@@ -77,6 +82,11 @@ class TrainingViewModel(
     /** 演示模式（FR-14）。决定写库时的 sensorMode，绝不能被当成真实记录 */
     private var demoMode: Boolean = false
 
+    /** 当前感知数据源。演示模式 → DemoSensor；否则 NullSensor（S6 第二部分接真实源）*/
+    private var sensor: SensorAdapter = container.sensorFor(demoMode = false)
+
+    private var sessionStartedAtMs: Long = 0L
+
     init {
         // 进页面先查有没有未完成的训练（AC-13），没有就立刻开始新的一场。
         // 首版漏了"立刻开始"这一步，页面永远停在「等待开始」——
@@ -85,6 +95,8 @@ class TrainingViewModel(
             val settings = container.settingsStore.current()
             val clinical = settings.screening.hasRiskAnswers
             demoMode = settings.isDemoMode
+            _state.value = _state.value.copy(demoMode = settings.isDemoMode)
+            sensor = container.sensorFor(demoMode)
             // 先看内存里是否已有**正在进行**的会话（锁屏/重建后重新进入）
             val running = coordinator.currentFrame()
             val hasRunning = running.status == TrainingStatus.RUNNING ||
@@ -92,6 +104,8 @@ class TrainingViewModel(
             if (hasRunning) {
                 // 认领进行中的会话：不弹恢复对话框、不重置进度
                 started = true
+                sessionStartedAtMs = System.currentTimeMillis() - coordinator.elapsedActiveMs()
+                viewModelScope.launch { sensor.start() }
                 _state.value = _state.value.copy(clinicalNotice = clinical)
                 observeFrames()
                 return@launch
@@ -137,6 +151,8 @@ class TrainingViewModel(
     fun start() {
         if (started) return
         started = true
+        sessionStartedAtMs = System.currentTimeMillis()
+        viewModelScope.launch { sensor.start() }
         coordinator.start()
         observeFrames()
     }
@@ -151,11 +167,47 @@ class TrainingViewModel(
                 _state.value = _state.value.copy(
                     frame = frame,
                     paused = frame.status == TrainingStatus.PAUSED,
+                    metric = computeMetric(),
                 )
                 if (frame.status == TrainingStatus.COMPLETE && savedId == null) {
                     finishSession(frame)
                 }
             }
+        }
+    }
+
+    /**
+     * 把感知快照过一遍 [QualityGate]，映射成指标区状态。
+     *
+     * 关键：`showNumbers` 为 false 时 UI **不会**渲染任何数字 ——
+     * 这条约束由 `MetricUiState` 的类型表达，而不是靠界面记得判断。
+     */
+    private fun computeMetric(): MetricUiState {
+        val snap = sensor.snapshot(coordinator.elapsedActiveMs().toInt() / 1000)
+        if (snap.missingReason == MissingReason.NOT_ENABLED) {
+            return MetricUiState.NotEnabled
+        }
+        val verdict = QualityGate.evaluate(snap)
+        return when (verdict.state) {
+            com.diqi.demo.data.db.QualityState.VALID -> MetricUiState.Valid(
+                heartRateBpm = snap.heartRateBpm,
+                breathingRatePerMin = snap.breathingRatePerMin,
+                sqi = snap.sqi,
+                dimmed = verdict.dimmed,
+            )
+            com.diqi.demo.data.db.QualityState.DEGRADED -> MetricUiState.Degraded(
+                heartRateBpm = snap.heartRateBpm,
+                breathingRatePerMin = snap.breathingRatePerMin,
+                sqi = snap.sqi,
+                banner = verdict.banner,
+            )
+            com.diqi.demo.data.db.QualityState.INVALID -> MetricUiState.Invalid(snap.sqi)
+            com.diqi.demo.data.db.QualityState.NO_DATA ->
+                if (snap.elapsedSec < QualityGate.HR_READY_SEC) {
+                    MetricUiState.Establishing(snap.elapsedSec)
+                } else {
+                    MetricUiState.NoData(verdict.reason)
+                }
         }
     }
 
@@ -196,7 +248,9 @@ class TrainingViewModel(
      * 与容器销毁时。
      */
     fun onClearedComposition() {
-        // 故意留空：只保留一个明确的调用点，避免以后有人误以为这里该 release
+        // 页面离开时停投喂（需求 §5.3：页面销毁 release()）。
+        // 会话本身是 app 级的，不在这里释放。
+        runCatching { sensor.release() }
     }
 
     override fun onCleared() {

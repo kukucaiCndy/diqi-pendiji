@@ -12,6 +12,9 @@ import com.diqi.demo.audio.VoiceGuide
 import com.diqi.demo.data.prefs.DataStoreSnapshotStore
 import com.diqi.demo.data.prefs.SnapshotStore
 import com.diqi.demo.data.repo.SessionRepository
+import com.diqi.demo.sensor.DemoSensor
+import com.diqi.demo.sensor.NullSensor
+import com.diqi.demo.sensor.SensorAdapter
 import com.diqi.demo.domain.training.TrainingEngine
 import com.diqi.demo.domain.training.TrainingParams
 import com.diqi.demo.training.TrainingSessionCoordinator
@@ -66,6 +69,19 @@ class AppContainer(private val app: Application) {
     val leakDiaryRepository: LeakDiaryRepository by lazy { LeakDiaryRepository(database) }
 
     val snapshotStore: SnapshotStore by lazy { DataStoreSnapshotStore(app) }
+
+    /**
+     * 按当前设置选择感知数据源。
+     *
+     * - 演示模式 → [DemoSensor]（产出数值但带 `isSimulated` 标记，必须水印）
+     * - 其他 → [NullSensor]（如实"未启用感知"）
+     *
+     * 真实 RppgSensor 在 S6 第二部分接入（CameraX + ML Kit + Bridge）。
+     * 刻意先只有这两个实现：**没有摄像头也绝不出假数值**，
+     * 这是 FR-08 与 AC-14 的底线。
+     */
+    fun sensorFor(demoMode: Boolean): SensorAdapter =
+        if (demoMode) DemoSensor() else NullSensor()
 
     /**
      * 语音播放器。

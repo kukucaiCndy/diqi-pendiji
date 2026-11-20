@@ -1,0 +1,195 @@
+package com.diqi.demo.sensor
+
+import com.diqi.demo.data.db.MissingReason
+import com.diqi.demo.data.db.QualityState
+
+/**
+ * 一次感知读数快照。
+ *
+ * 字段全部可空：**任一通道为 null 表示该通道当前不可用**，界面必须按
+ * "不显示"处理，不得用 0 或占位符替代（FR-08）。
+ */
+data class SensorSnapshot(
+    val state: QualityState = QualityState.NO_DATA,
+    val heartRateBpm: Float? = null,
+    val breathingRatePerMin: Float? = null,
+    val sqi: Float? = null,
+    val missingReason: MissingReason = MissingReason.NOT_ENABLED,
+    /** 权重子标记：演示数据（必须带全屏水印，AC-19）*/
+    val isSimulated: Boolean = false,
+    /** 已运行秒数，用于"信号建立中"进度 */
+    val elapsedSec: Int = 0,
+    /** 人脸是否在框内 */
+    val faceInFrame: Boolean = false,
+    /** 光照是否充足 */
+    val lightOk: Boolean = true,
+) {
+    companion object {
+        /** 未启用感知：整块不显示，只留一行（FR-06）*/
+        val NOT_ENABLED = SensorSnapshot(
+            state = QualityState.NO_DATA,
+            missingReason = MissingReason.NOT_ENABLED,
+        )
+    }
+}
+
+/**
+ * 感知适配器。
+ *
+ * 三种实现对应需求 §2.1 的三种数据源：
+ * - [NullSensor]   未授权 / SDK 不可用 / 用户选择不带摄像头
+ * - [DemoSensor]   仅演示模式，输出模拟值（必须水印隔离）
+ * - `RppgSensor`   真实端侧推理（S6 第二部分，经 `FacePhysBridge`）
+ *
+ * ## 为什么用接口而不是一个带 flag 的类
+ *
+ * 三种数据源的**合规约束完全不同**：Demo 必须水印、Null 必须显示"未启用"、
+ * 真实源必须做四态降级。用接口让"某个数据源忘了水印"变成编译期缺实现，
+ * 而不是运行期靠人记得判断 flag。
+ */
+interface SensorAdapter {
+
+    /** 数据源模式，写库时据此填 `sensorMode` */
+    val mode: com.diqi.demo.data.db.SensorMode
+
+    /** 是否真实感知（只有真实源才允许带生理数值）*/
+    val isReal: Boolean
+
+    suspend fun start()
+
+    /** 投喂一帧 ROI（仅真实源需要；Null/Demo 忽略）*/
+    fun feed(roi: ByteArray, dtSec: Float)
+
+    /** 读取当前快照。**永远不返回伪造值**（Demo 除外，且 Demo 带 isSimulated 标记）。 */
+    fun snapshot(nowElapsedSec: Int): SensorSnapshot
+
+    suspend fun stop()
+
+    /** 页面销毁 / 切换使用者 */
+    fun release()
+
+    /** 诊断信息（P03 折叠区）*/
+    fun diagnostics(): SensorDiagnostics
+}
+
+data class SensorDiagnostics(
+    val sdkVersion: String,
+    val initialized: Boolean,
+    val licenseDaysLeft: Int?,
+    val modelAssetPresent: Boolean,
+    /** 失败原因的用户可读文案；null 表示无失败 */
+    val failureMessage: String? = null,
+)
+
+/**
+ * 空感知源。
+ *
+ * 用于：用户没开摄像头、未授权、SDK 不可用。
+ * 它**永远**返回 [QualityState.NO_DATA] + [MissingReason.NOT_ENABLED]，
+ * 界面因此在指标区只显示一行「未启用感知」。
+ */
+class NullSensor : SensorAdapter {
+    override val mode = com.diqi.demo.data.db.SensorMode.OFF
+    override val isReal = false
+    override suspend fun start() = Unit
+    override fun feed(roi: ByteArray, dtSec: Float) = Unit
+    override fun snapshot(nowElapsedSec: Int) = SensorSnapshot.NOT_ENABLED
+    override suspend fun stop() = Unit
+    override fun release() = Unit
+    override fun diagnostics() = SensorDiagnostics(
+        sdkVersion = "—",
+        initialized = false,
+        licenseDaysLeft = null,
+        modelAssetPresent = false,
+    )
+}
+
+/**
+ * 演示源（FR-14 / AC-19）。
+ *
+ * ## 它唯一被允许"造假"的理由
+ *
+ * 演示模式的存在意义是让人看到"有数据时长什么样"，所以它**必须**产出数值。
+ * 但合规上有三条硬约束，这里逐条守住：
+ *
+ * 1. 每个快照都带 `isSimulated = true`，UI 据此渲染**全屏水印**；
+ * 2. 写库时 `sensorMode = 'simulated'`，数据层统一过滤，不计入打卡与周报；
+ * 3. 数值是**明显的人造序列**（正弦 + 固定基线），不做"看起来像随机真实值"的伪装。
+ *
+ * 另外刻意**不做**平滑：需求 §5.6 禁止"平滑造假"，
+ * 而演示值本身就是假的，再加平滑只会让人误以为算法在工作。
+ */
+class DemoSensor(
+    private val hrBase: Float = 72f,
+    private val brBase: Float = 16f,
+) : SensorAdapter {
+
+    override val mode = com.diqi.demo.data.db.SensorMode.SIMULATED
+    override val isReal = false
+
+    @Volatile
+    private var started = false
+
+    override suspend fun start() {
+        started = true
+    }
+
+    override fun feed(roi: ByteArray, dtSec: Float) = Unit
+
+    override fun snapshot(nowElapsedSec: Int): SensorSnapshot {
+        if (!started) return SensorSnapshot.NOT_ENABLED
+
+        // 前 30 秒一律"信号建立中"，与真实源的行为保持一致 ——
+        // 否则演示模式会让人以为真实源也能立刻出数（AC-15 的对照）
+        if (nowElapsedSec < HR_READY_SEC) {
+            return SensorSnapshot(
+                state = QualityState.NO_DATA,
+                isSimulated = true,
+                elapsedSec = nowElapsedSec,
+                faceInFrame = true,
+                missingReason = MissingReason.NONE,
+            )
+        }
+
+        // 用正弦做可见的、可预测的变化，方便演示时讲解"数值会随呼吸起伏"
+        val t = nowElapsedSec.toFloat()
+        val hr = hrBase + 4f * kotlin.math.sin(t / 9f)
+        val sqi = 0.82f
+
+        return SensorSnapshot(
+            state = QualityState.VALID,
+            heartRateBpm = hr,
+            // 呼吸率 60 秒后才出现，与 §5.4 一致
+            breathingRatePerMin = if (nowElapsedSec >= BR_READY_SEC) {
+                brBase + 1.5f * kotlin.math.sin(t / 13f)
+            } else {
+                null
+            },
+            sqi = sqi,
+            missingReason = MissingReason.NONE,
+            isSimulated = true,
+            elapsedSec = nowElapsedSec,
+            faceInFrame = true,
+        )
+    }
+
+    override suspend fun stop() {
+        started = false
+    }
+
+    override fun release() {
+        started = false
+    }
+
+    override fun diagnostics() = SensorDiagnostics(
+        sdkVersion = "DEMO",
+        initialized = true,
+        licenseDaysLeft = null,
+        modelAssetPresent = false,
+    )
+
+    companion object {
+        const val HR_READY_SEC = 30
+        const val BR_READY_SEC = 60
+    }
+}

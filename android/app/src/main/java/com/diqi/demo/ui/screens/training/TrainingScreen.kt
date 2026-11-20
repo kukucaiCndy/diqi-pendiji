@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -211,7 +212,7 @@ fun TrainingScreen(
         },
     ) {
         // ── 视频区（未启用感知时深色占位）────────────────────────────────
-        VideoAreaPlaceholder()
+        VideoAreaPlaceholder(demoMode = state.demoMode, metric = state.metric)
 
         VSpace(HrSpacing.xs)
 
@@ -328,7 +329,7 @@ fun TrainingScreen(
         VSpace(HrSpacing.sm)
 
         // ── 指标区 ───────────────────────────────────────────────────────
-        MetricArea(metric = state.metric)
+        MetricArea(metric = state.metric, demoMode = state.demoMode)
 
         VSpace(HrSpacing.sm)
 
@@ -350,7 +351,19 @@ fun TrainingScreen(
  * 不画假的人脸框、不放伪造的波形 —— 需求 FR-08 的「宁可不显示」在这里同样适用。
  */
 @Composable
-private fun VideoAreaPlaceholder() {
+private fun VideoAreaPlaceholder(demoMode: Boolean, metric: MetricUiState) {
+    // 视频区文案必须**如实反映当前数据源**：
+    // 演示模式下如果还写"未启用感知"，就与指标区自相矛盾了。
+    val title = when {
+        demoMode -> "演示模式"
+        metric is MetricUiState.NotEnabled -> "未启用感知"
+        else -> "感知中"
+    }
+    val subtitle = when {
+        demoMode -> "没有画面，仅模拟数值"
+        metric is MetricUiState.NotEnabled -> "不开摄像头也能完成练习"
+        else -> "画面不会保存，也不会上传"
+    }
     Box(
         Modifier
             .fillMaxWidth()
@@ -361,13 +374,13 @@ private fun VideoAreaPlaceholder() {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "未启用感知",
+                title,
                 style = HrType.bodyMediumBold,
                 color = HrColor.TimelineName,
                 modifier = Modifier.testTag(UiTag.P04_SENSOR_CHIP),
             )
             Text(
-                "不开摄像头也能完成练习",
+                subtitle,
                 style = HrType.labelSmall,
                 color = HrColor.TimelineLabel,
                 textAlign = TextAlign.Center,
@@ -383,20 +396,105 @@ private fun VideoAreaPlaceholder() {
  * S6 会在这里加四态渲染（VALID/DEGRADED/INVALID/NO_DATA）。
  */
 @Composable
-private fun MetricArea(metric: MetricUiState) {
-    if (metric is MetricUiState.NotEnabled) {
-        HrCard(color = HrColor.SubtleContainer, modifier = Modifier.testTag(UiTag.P04_METRIC_AREA)) {
-            Text(
-                "未启用感知",
-                style = HrType.bodySmall,
-                color = HrColor.InkSecondary,
-                modifier = Modifier.testTag(UiTag.P04_METRIC_PLACEHOLDER),
-            )
+private fun MetricArea(metric: MetricUiState, demoMode: Boolean) {
+    when (metric) {
+        is MetricUiState.NotEnabled -> {
+            // FR-06：「未开启感知 → 整块不显示，仅留一行」
+            HrCard(color = HrColor.SubtleContainer, modifier = Modifier.testTag(UiTag.P04_METRIC_AREA)) {
+                Text(
+                    "未启用感知",
+                    style = HrType.bodySmall,
+                    color = HrColor.InkSecondary,
+                    modifier = Modifier.testTag(UiTag.P04_METRIC_PLACEHOLDER),
+                )
+            }
         }
-        return
+
+        is MetricUiState.Establishing -> {
+            // AC-15：前 30 秒只显示「信号建立中」，**不显示任何数字**
+            HrCard(color = HrColor.SubtleContainer, modifier = Modifier.testTag(UiTag.P04_METRIC_AREA)) {
+                Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xxs)) {
+                    HrStatusChip(
+                        text = "信号建立中",
+                        tone = ChipTone.WARN,
+                        tag = UiTag.P04_METRIC_QUALITY,
+                    )
+                    Text(
+                        text = "正在建立信号 ${metric.elapsedSec}s / 约 30s，请把手机放稳。",
+                        style = HrType.bodySmall,
+                        color = HrColor.InkSecondary,
+                        modifier = Modifier.testTag(UiTag.P04_METRIC_PLACEHOLDER),
+                    )
+                }
+            }
+        }
+
+        is MetricUiState.NoData -> {
+            HrCard(color = HrColor.SubtleContainer, modifier = Modifier.testTag(UiTag.P04_METRIC_AREA)) {
+                Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xxs)) {
+                    HrStatusChip(
+                        text = "信号暂失",
+                        tone = ChipTone.NEUTRAL,
+                        tag = UiTag.P04_METRIC_QUALITY,
+                    )
+                    Text(
+                        text = "节律提示照常进行，不影响练习。",
+                        style = HrType.bodySmall,
+                        color = HrColor.InkSecondary,
+                        modifier = Modifier.testTag(UiTag.P04_METRIC_PLACEHOLDER),
+                    )
+                }
+            }
+        }
+
+        is MetricUiState.Invalid -> {
+            HrCard(modifier = Modifier.testTag(UiTag.P04_METRIC_AREA)) {
+                Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xxs)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("心率", style = HrType.label, color = HrColor.WeakText)
+                        Text("--", style = HrType.monoMetric, color = HrColor.WeakText)
+                    }
+                    HrStatusChip(
+                        text = "信号弱",
+                        tone = ChipTone.DANGER,
+                        tag = UiTag.P04_METRIC_QUALITY,
+                    )
+                }
+            }
+        }
+
+        is MetricUiState.Degraded -> MetricNumbers(
+            hr = metric.heartRateBpm,
+            br = metric.breathingRatePerMin,
+            state = metric,
+            dimmed = false,
+            banner = metric.banner,
+            demoMode = demoMode,
+        )
+
+        is MetricUiState.Valid -> MetricNumbers(
+            hr = metric.heartRateBpm,
+            br = metric.breathingRatePerMin,
+            state = metric,
+            dimmed = metric.dimmed,
+            banner = null,
+            demoMode = demoMode,
+        )
     }
-    // S6 填充四态（Valid/Degraded/Invalid/NoData）；此处只保留结构。
-    // 注意：Establishing 时**不得显示任何数字**（AC-15）。
+}
+
+@Composable
+private fun MetricNumbers(
+    hr: Float?,
+    br: Float?,
+    state: MetricUiState,
+    dimmed: Boolean,
+    banner: String?,
+    demoMode: Boolean,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -406,6 +504,106 @@ private fun MetricArea(metric: MetricUiState) {
             .testTag(UiTag.P04_METRIC_AREA),
         verticalArrangement = Arrangement.spacedBy(HrSpacing.xs),
     ) {
-        HrStatusChip(text = "信号建立中", tone = ChipTone.WARN, tag = UiTag.P04_METRIC_QUALITY)
+        // 演示数据必须有全屏水印（AC-19）。这里再给一条就地提示，
+        // 因为"全屏水印"在大屏上不一定会覆盖到指标卡本身。
+        if (demoMode) {
+            HrStatusChip(
+                text = "模拟数据 · 仅用于演示",
+                tone = ChipTone.WARN,
+                tag = UiTag.P04_DEMO_WATERMARK,
+            )
+        }
+        if (banner != null) {
+            HrBanner(text = banner, tone = ChipTone.WARN)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(HrSpacing.md),
+        ) {
+            MetricCell(
+                label = "心率",
+                value = hr?.let { "%.0f".format(it) },
+                unit = "bpm",
+                color = HrColor.HeartRate,
+                tag = UiTag.P04_METRIC_HR,
+                dimmed = dimmed,
+            )
+            MetricCell(
+                label = "呼吸率",
+                value = br?.let { "%.0f".format(it) },
+                unit = "次/分",
+                color = HrColor.BreathingRate,
+                tag = UiTag.P04_METRIC_BR,
+                dimmed = dimmed,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HrStatusChip(
+                text = when (state) {
+                    is MetricUiState.Degraded -> "信号一般"
+                    else -> "信号良好"
+                },
+                tone = if (state is MetricUiState.Degraded) ChipTone.WARN else ChipTone.GOOD,
+                tag = UiTag.P04_METRIC_QUALITY,
+            )
+            QualityDots(count = state.qualityDots)
+        }
+    }
+}
+
+/**
+ * 一个指标单元格。
+ *
+ * `value == null` 时**不渲染数字**，只留「--」——
+ * 需求禁止"无数据时显示数字"，这里的类型已经保证了这一点（`Float?`）。
+ */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.MetricCell(
+    label: String,
+    value: String?,
+    unit: String,
+    color: androidx.compose.ui.graphics.Color,
+    tag: String,
+    dimmed: Boolean,
+) {
+    val alpha = if (dimmed) 0.5f else 1f
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .testTag(tag),
+    ) {
+        Text(label, style = HrType.micro, color = HrColor.WeakText)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = value ?: "--",
+                style = HrType.monoMetric,
+                color = if (value == null) HrColor.WeakText else color.copy(alpha = alpha),
+            )
+            Text(
+                text = unit,
+                style = HrType.micro,
+                color = HrColor.WeakText,
+                modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+            )
+        }
+    }
+}
+
+/** 质量三点指示（设计稿「三点质量指示」）。*/
+@Composable
+private fun QualityDots(count: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        repeat(3) { index ->
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(if (index < count) HrColor.Good else HrColor.Track),
+            )
+        }
     }
 }
