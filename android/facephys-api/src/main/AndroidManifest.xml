@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FacePhys 端侧感知 SDK 的 API 契约桩。真实 AAR 落地时整模块被替换。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

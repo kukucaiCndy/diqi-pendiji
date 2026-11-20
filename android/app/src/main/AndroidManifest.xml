@@ -1,30 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 摄像头为可选能力：不授权也必须能走完整训练闭环（AC-04） -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 仅用于 FacePhys SDK 首次激活与 License 校验；训练本身完全离线（AC-03） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 训练中常驻通知（前台服务）与本地提醒 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!--
+      摄像头为可选能力。**必须显式声明 required="false"**：
+      不写的话部分渠道/ROM 会按"需要摄像头"做安装过滤，
+      导致 AC-04「拒绝相机仍可训练」在安装环节就已经失败。
+      另外不要再声明 RECEIVE_BOOT_COMPLETED / WAKE_LOCK —— WorkManager 自带，
+      本应用没有任何代码直接使用它们，多余的危险权限会加重隐私审查负担（需求 §7）。
+    -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.camera.front"
         android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
 
     <application
+        android:name=".HerRhythmApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HerRhythm">
+        android:theme="@style/Theme.HerRhythm"
+        tools:targetApi="35">
 
+        <!--
+          launchMode=singleTop：训练中点击常驻通知必须回到**同一个** Activity 实例。
+          否则会建出第二个实例 → 第二套 NavHost / 第二个 ViewModel / 第二份相机绑定 /
+          双份计时推进（D13）。
+
+          configChanges 刻意**不包含 fontScale**：
+          若声明了，系统改字号时不会重建 Activity，Compose 也会复用 remember 的测量缓存，
+          于是 AC-09「系统字体最大档不破版」这条最重要的验收动作永远测不到真实重建路径。
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.HerRhythm">
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:theme="@style/Theme.HerRhythm"
+            tools:ignore="LockedOrientationActivity,DiscouragedApi">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          训练前台服务：保证锁屏/后台时计时与语音不中断（AC-05）。
+          类型用 mediaPlayback（本服务确实在播放语音音频），不使用 camera ——
+          相机归属 application-scoped 的 SensorCoordinator（D12），
+          这样锁屏停投喂但 SDK 窗口保留，返回后指标可快速恢复。
+        -->
+        <service
+            android:name=".service.TrainingForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- WorkManager 默认初始化由 androidx 提供，此处不覆盖 -->
+
     </application>
 
 </manifest>

@@ -47,6 +47,29 @@
 | **D13** | `MainActivity` 设 `launchMode="singleTop"` + `onNewIntent` 写入 `MutableStateFlow` 由 NavHost 消费；训练页为**顶级路由**（非 Tab 图内节点） | 否则通知点击会建第二实例 → 双 NavHost + 双相机绑定 + 双 tick（评审指出） |
 | **D14** | S1 即落 `Modifier.semantics { testTagsAsResourceId = true }` + `UiTag` 常量表 | 实测 Compose 节点 `resource-id` 全为空，只能靠中文文案定位；而 S9 要改文案 → 不留到 S9 就是全部脚本失效 |
 
+### D15（评审后追加）：对比度不给文本开 3:1 的口子
+
+需求 FR-15 只写「对比度 ≥ 4.5:1」，**没有大字号豁免条款**。
+首版 `Contrast` 自行引入了 WCAG 的 3:1「大字号」档，并用于 4 组配对 —— 这属于替需求做让步。
+现裁定：**3:1 只用于确实不是文字的元素**（进度轨填充、状态圆点）；
+所有文字（含 32sp 指标值、36sp 倒计时）一律按 4.5:1 执行。
+副产物：心率 token 由 `#E11D48`（canvas 底仅 4.34:1）下调为 `#D6193F`（白底 5.16 / canvas 4.76）。
+
+### D16（评审后追加）：`configChanges` 不含 `fontScale`
+
+首版在 `configChanges` 里声明了 `fontScale`，导致改系统字号时 Activity 不重建、
+Compose 复用 `remember` 的测量缓存 —— AC-09「字号最大档不破版」这条最重要的验收动作
+会永远测不到真实重建路径。现已移除。
+
+### 事实更正：ML Kit 依赖链（首版注释有误）
+
+首版注释写「bundled 版不依赖设备 GMS」。用 `./gradlew :app:dependencies` 核实后：
+`com.google.mlkit:face-detection:16.1.7` 的**模型确实随包**
+（APK 内 `libface_detector_v2_jni.so` 在，无 GMS 服务的设备也能检出人脸），
+但传递依赖**确实包含** `play-services-mlkit-face-detection:17.1.0`、
+`com.google.android.datatransport:transport-*` 与 `firebase-encoders-*` ——
+即带一条遥测上传通道。注释已改正，并纳入 AC-03「完全离线」的静态审计范围。
+
 ### 数据模型裁定（D9 配套）
 
 `TrainingSession` 全 15 字段落地，其中 4 个承重字段明确写入者：
@@ -70,7 +93,7 @@
 | --- | --- |
 | 语言/UI | Kotlin 2.0.21 + Compose BOM 2024.12.01，单 Activity |
 | 编译 | AGP 8.7.3 / JDK 17 / minSdk 26 / targetSdk 35 / `applicationId=com.diqi.demo` |
-| KSP | `2.0.21-1.0.25`（**必须与 Kotlin 严格同前缀**） |
+| KSP | `2.0.21-1.0.28`（**必须与 Kotlin 严格同前缀**；已在 Gradle 中落地并构建通过） |
 | 存储 | Room 2.6.1 + DataStore 1.1.1 |
 | 相机 | CameraX 1.4.1 + **`com.google.mlkit:face-detection:16.1.7`（bundled，不依赖 GMS）** |
 | 导航 | Navigation Compose 2.8.5 |

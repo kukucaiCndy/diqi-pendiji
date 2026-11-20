@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用图标前景：节律环 + 呼吸波形。纯矢量，无位图资产。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 外环（品牌强调色） -->
+    <path
+        android:pathData="M30,54 a24,24 0 1,0 48,0 a24,24 0 1,0 -48,0"
+        android:strokeColor="#5EEAD4"
+        android:strokeWidth="5.5"
+        android:fillColor="#00000000" />
+
+    <!-- 呼吸波形（白色） -->
+    <path
+        android:pathData="M38,54 L47,54 L51,45 L57,63 L61,54 L70,54"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>
