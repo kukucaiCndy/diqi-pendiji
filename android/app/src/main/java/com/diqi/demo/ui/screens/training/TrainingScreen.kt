@@ -396,7 +396,7 @@ private fun VideoAreaPlaceholder(demoMode: Boolean, metric: MetricUiState) {
  * S6 会在这里加四态渲染（VALID/DEGRADED/INVALID/NO_DATA）。
  */
 @Composable
-private fun MetricArea(metric: MetricUiState, demoMode: Boolean) {
+internal fun MetricArea(metric: MetricUiState, demoMode: Boolean = false) {
     when (metric) {
         is MetricUiState.NotEnabled -> {
             // FR-06：「未开启感知 → 整块不显示，仅留一行」
@@ -487,7 +487,7 @@ private fun MetricArea(metric: MetricUiState, demoMode: Boolean) {
 }
 
 @Composable
-private fun MetricNumbers(
+internal fun MetricNumbers(
     hr: Float?,
     br: Float?,
     state: MetricUiState,
