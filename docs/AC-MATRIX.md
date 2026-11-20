@@ -12,7 +12,7 @@
 | AC-05 | 锁屏 30s 返回，进度误差 ≤1s，指标恢复 | S5+S6 | `KEYCODE_POWER` → `sleep 30` → 唤醒 → 截图 + `logcat` | `phaseRemaining` 与理论值差 ≤1000ms；返回后指标区 3s 内退出「信号暂失」 | A | 指标恢复依赖 `SensorCoordinator` 窗口保留（D12）；真实 SDK 未验证 |
 | AC-06 | 来电打断音频，训练不中断，后续提示正常 | S3+S5 | 音频焦点抢占：`AudioManager` 请求 `AUDIOFOCUS_LOSS_TRANSIENT` 的测试入口 + 真人拨号 | 训练状态机 state 不变；被抢那句跳过；下一阶段语音正常播放 | B | 真机无 `cmd telecom` 注入通道，无法脚本模拟来电 |
 | AC-07 | 第 3 次收缩点结束 → `completedReps=2`，不补造 | S3+S5 | 单测 + 真机在第 3 次 Contract 中点结束 | `completedReps==2`（非 3）；DB 字段一致 | A | — |
-| AC-08 | 连点两次完成 → 仅一条记录 | S7 | `tools/e2e.sh sql` + 代码审阅 | 数据层 upsert 幂等已由 `HerRhythmDaoTest` 真库验证；**VM 层"只保存一次"无自动化测试** | B | 首版标 A 无实现支撑，已降级。要真验需补 `TrainingViewModelTest` |
+| AC-08 | 连点两次完成 → 仅一条记录 | S7 | **`TrainingViewModelTest.连点结束只保存一条记录`**（JVM） + `HerRhythmDaoTest`（真库 upsert 幂等） | VM 层连续两次 `confirmStop()` 只产生 1 条 `SessionDraft`；数据层同 id 只有一行 | **A** | 两层都有测试；真机双击未做（写库路径已闭环，不必） |
 | AC-09 | 系统字体最大档浏览全部页面无截断/重叠 | S9 | `settings put system font_scale 1.3` 与 `2.0` + `am force-stop` 重启 → 逐页截图 | 每页截图人工判读无截断/重叠（Compose **不产出** Layout 溢出日志，不能以此为判据）；关键按钮仍可见可点 | B | 只能人工判读；已从 Manifest 的 `configChanges` 移除 `fontScale`，确保重建路径被真正触发 |
 | AC-10 | TalkBack 完成一次训练 | S4 起每阶段 + S9 收口 | **Compose 语义层**仪器化断言（`SemanticsMatcher.keyIsDefined(ContentDescription)`）+ 人工 | 主流程每个可点控件的 Compose 语义节点带 `ContentDescription` | C | **本机无 TalkBack**，运行时流程无法验。**重要测量偏差**：`uiautomator dump` 把带 testTag 的节点报成 `clickable=true` 且 `content-desc` 为空（朗读文本落在合并子节点上），据 dump 统计会得到假阴性 —— 判据必须放 Compose 语义层 |
 | AC-11 | 选「有不适」→ 就医提示，无加量建议 | S7 | 驱动选择「有不适」→ 截图 | 截图含就医/停止提示；**不含**「继续加量/加大」等词 | A | — |
@@ -23,7 +23,7 @@
 | AC-16 | 遮脸 5s → 3s 内变 NO_DATA，节律继续 | S6 | `DemoSensor.injectFaceLost()` + 真机物理遮挡（人工） | 故障注入后 ≤3s 指标区转「信号暂失」；训练 state 不变 | B | 物理遮挡无法脚本，逻辑路径已注入覆盖 |
 | AC-17 | 强光/逆光 → 校准页提示光照问题 | S6 | `injectLowLight()` + 真机物理（人工） | 校准页出现「光线不足」提示条；非训练后报错 | B | 同上 |
 | AC-18 | 连续进出训练页 5 次不崩溃、无相机占用异常 | S6 | 脚本循环 5 次 + `logcat` 过滤 | 无 `FATAL`；无 `CameraDevice`/`ImageProxy` 泄漏日志；第 6 次进入正常 | A | — |
-| AC-19 | 演示模式：全屏水印；记录标 simulated；不计入打卡与周报 | S6+S8 | 开演示跑一次 → 截图 + `tools/e2e.sh sql` + 周报截图 | 水印节点存在；DB `mode='simulated'`；打卡天数不变；周报不含该次 | A | D9 裁定：写库但过滤；记录页独立「演示记录」区带水印展示 |
+| AC-19 | 演示模式：水印；记录标 simulated；不计入打卡与周报 | S6+S7+S8 | 真机截图 + `e2e.sh sql` + **`TrainingViewModelTest.演示模式写入_simulated`** + **`MetricAreaStateTest.演示模式下必须出现水印`** | VM 层写入 `SensorMode.SIMULATED`；指标区出现水印节点；记录页独立区块且统计只含真实训练 | A | **水印目前是「指标卡内 chip」而非全屏水印** —— 需产品裁定（见 FINAL-REPORT §4.1） |
 | AC-20 | 首次走完 Day1 → 首页 Day1 主题；完成后进 Day2 | S4 | 清数据 → 走 Day1 → 截图 | 首页文本含「Day 1」；完成后含「Day 2」 | A | — |
 | AC-21 | 未开启分享 → 只能预览，不能直接发送 | S8 | 打开周报 → 截图 | 分享按钮 disabled；无隐式发送 | A | — |
 | AC-22 | 分享面板仅天数/时长，无心率和日记 | S8 | 点分享 → 截图系统面板 | 分享文本仅含天数与时长；`ShareCardBuilder` 单测断言无 `bpm/心率/呼吸/HRV/漏尿` | B | 系统面板需截图判读 |
