@@ -170,8 +170,40 @@ class TrainingSessionCoordinator(
         ticker = null
     }
 
+    /**
+     * 上一次真正发出去的"显示签名"。
+     *
+     * ## 为什么需要它（S9 性能实测的直接后果）
+     *
+     * 首版 tick 每 100ms 无条件 `_frames.value = frame`，而训练页组件树很重
+     * （阶段时间轴 + Canvas 圆环 + 指标区 + 免责文案）。实测 20 秒训练
+     * 掉帧率 **35.5%**，远超需求「< 5%」。
+     *
+     * 关键洞察：**屏幕上能看见的变化只有 1 秒一次**（倒计时按秒显示、
+     * 进度环的可见差异也在一秒量级），中间那些 100ms 帧在视觉上是重复的。
+     * 所以用"显示签名"去重：签名不变就不发帧，Compose 也就不会重组。
+     *
+     * 代价：圆环从"连续动画"变成"每秒一格"。这是刻意的取舍 ——
+     * 适老化场景下秒级步进反而更容易跟上节奏，而掉帧是硬指标。
+     */
+    private var lastEmittedSignature: String? = null
+
     private fun emitFrame() {
         val frame = engine.frame(clock.nowMs())
+        // 显示签名：只看真正会影响画面的字段
+        val signature = buildString {
+            append(frame.status).append('|')
+            append(frame.phase).append('|')
+            append(frame.repIndex).append('|')
+            append(frame.completedReps).append('|')
+            // 倒计时按「秒」分桶（与 countdownText 的取整方式一致）
+            append((frame.phaseRemainingMs + 999) / 1000)
+        }
+        if (signature == lastEmittedSignature) {
+            // 画面不会变：仍然要检查阶段语音是否需要补播，但不重组 UI
+            return
+        }
+        lastEmittedSignature = signature
         _frames.value = frame
 
         // 阶段变更才播语音：避免每 100ms 重复触发
