@@ -15,8 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import com.diqi.demo.service.TrainingForegroundService
+import com.diqi.demo.ui.nav.HerRhythmNavHost
 import com.diqi.demo.ui.nav.NavCommand
-import com.diqi.demo.ui.screens.dev.DesignSystemScreen
 import com.diqi.demo.ui.theme.HerRhythmTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -25,7 +25,8 @@ class MainActivity : ComponentActivity() {
     /**
      * 跨入口导航指令（D13）。
      *
-     * Activity 只负责写入，消费方是 NavHost —— 冷启动与热启动走同一条路径。
+     * Activity 只负责写入，消费方是 NavHost —— 冷启动与热启动走同一条路径，
+     * 不会出现"热启动时指令丢失"或"新建第二个 NavHost"。
      */
     private val navCommands = MutableStateFlow<NavCommand?>(null)
 
@@ -52,9 +53,10 @@ class MainActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true },
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    // S1 阶段：先只挂设计系统自检页，用于验证 token 与对比度。
-                    // 导航骨架在 S4 接入，届时替换为 HerRhythmNavHost(navCommands)。
-                    DesignSystemScreen()
+                    HerRhythmNavHost(
+                        navCommands = navCommands,
+                        onConsumeCommand = { navCommands.value = null },
+                    )
                 }
             }
         }

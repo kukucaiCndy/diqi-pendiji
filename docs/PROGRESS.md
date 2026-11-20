@@ -212,3 +212,64 @@
 - **语音内容与文案的一一对应未验证**：`VoiceScriptTest` 只能证明素材存在且非空，无法证明 `contract.m4a` 里念的确实是收缩文案。低成本方案（按 `字节数/字数` 落在中位数 ±15%）已记录，未实施。
 - **AC-06 的真实来电未验**：本机无 `cmd telecom` 注入通道，目前只有纯函数层（`focusActionFor`）与结构保证（音频层与训练层零耦合）。
 - **协调器尚未接入 UI/前台服务**：S5 完成。届时 AC-02/05/07/13 的端到端验证才真正成立。
+
+---
+
+## S4 · P01 引导筛查 + 导航骨架 + P02 首页 ✅ 完成
+
+### 交付物
+
+| 类别 | 内容 |
+| --- | --- |
+| 导航 | `HerRhythmNavHost`：单 Activity + Navigation Compose，底部 4 Tab，训练中为**顶级路由**（D13），通知指令由 `NavCommand` flow 消费 |
+| P01-a | 欢迎与隐私：37sp 主标题、隐私三条（本地处理/不录像/不上传）、主按钮**固定在底部** |
+| P01-b | 安全筛查：4 题分屏、进度条、三选项、分流提示（规则 A/B 分别展示） |
+| P02-a/b | 首页两态：今日训练卡（深色）/ 已完成卡（白色）、Day 主题、本周 7 点打卡、感知状态行 |
+| 组件 | `HrPrimaryButton` / `HrSecondaryButton` / `HrStatusChip` / `HrBanner` / `HrCard` / `HrWeekDots` / `HrPageWithAction` |
+
+### 端到端证据（全部真机截图）
+
+| 项 | 结果 |
+| --- | --- |
+| 单测 | ✅ 125 项 / 0 失败 |
+| 仪器化 | ✅ **24 项 / 0 失败**（含 20 项真库 DAO + 2 项设计系统 + 2 项无障碍语义） |
+| 冷启动 | ✅ 632–903 ms |
+| P01-a → 筛查 → 首页 | ✅ 脚本走通 4 题 |
+| **AC-20** | ✅ 造 3 天记录后首页显示 **Day 3**（`Day 3 · 练习不憋气`），首次完成日起算成立 |
+| **AC-12（前半）** | ✅ 首页「本周 3 次 · 6 分 15 秒」= 3 × 125s，与库内数据一致；打卡点落在四/五/六 |
+| 底栏 4 Tab | ✅ 切页正常，无栈异常 |
+| **AC-09（实测 2.0×）** | ✅ 系统字号 2.0 下逐页截图：文字无截断、可滚动、主按钮固定可见 |
+| 感知状态行可点 | ✅ 点击进入校准页（首版是死链接） |
+
+证据：`docs/evidence/s4_welcome.png`、`s4_home.png`、`s4_home_done.png`、`s4_font200_welcome.png`、`s4_font200_screening.png`
+
+### CodeReview（2 路编排：导航/数据流 + 适老化/可访问性）发现与处置
+
+| # | 问题 | 级别 | 处置 |
+| --- | --- | --- | --- |
+| 1 | **感知状态行「点这里了解」是假承诺** —— `onClick` 形参从未被引用，P03 校准页整页不可达（两路 reviewer 独立发现：静态代码 + 真机 dump 测得 `clickable=false`） | 高 | `HrStatusChip` 支持 `onClick` 并接上；真机验证可跳转并返回 |
+| 2 | **引导「跳过」不落库** → 每次冷启动重走引导，且答完 4 题再按跳过一次丢弃全部答案 | 高 | 新增 `acknowledgeScreeningSkipped()`（只写时间戳、不写答案，与"答完"在库里可区分） |
+| 3 | `clinicalNoticeRequired` 在"未答完"时为 true → 直接跳过的人会看到"你之前回答过需要留意的情况"，而他一题没答 | 高 | 拆成 `hasRiskAnswers`（只判风险项，供首页横幅）与 `isIncomplete`（软提示） |
+| 4 | `HrBanner` 正文用 14sp 渲染整句就医提示 → 直接违反「正文 ≥20sp」 | 高 | 改 `bodySmall`(20sp) |
+| 5 | **无障碍描述被 `tag != null` 门控** —— 依赖方向反了：有测试锚点的才有描述 | 高 | 所有主/次按钮、状态胶囊、提示条**无条件**设置 `contentDescription`，并改为 `semantics(mergeDescendants = true)` |
+| 6 | 感知三态实际只有两态（`READY` 不可达），且把"演示模式"映射成"信号弱"是**编造状态** | 高 | 删除假映射，感知层接入前如实显示"未开启感知" |
+| 7 | 首页 `LaunchedEffect(Unit)` 刷不到"从后台回来/跨天/前台服务练完" | 中 | 加 `ON_RESUME` 生命周期刷新 |
+| 8 | 重复点当前 Tab 会先把该 Tab `popUpTo` 掉、使 `launchSingleTop` 失效 → 每次重建（对训练 Tab 等于重拿相机） | 中 | 加 `if (currentRoute != tab.route)` 守卫 |
+| 9 | 引导两页各自 new 一个 `OnboardingViewModel` → 答案不共享，且 pop 后 entry-scoped 实例被清空 | 中 | VM 上提到导航层，两页共用一个实例 |
+| 10 | `HrPage` 默认可滚动 → 2.0× 下主按钮滚出屏幕，「一屏一主任务」不成立 | 高 | 新增 `HrPageWithAction`：内容可滚、**主操作固定底部**；免责声明留在滚动区 |
+| 11 | 首页 `dayHint` 渲染两次、卡片标题与按钮文字重复 | 低 | 去重并改写文案 |
+| 12 | 已完成卡 ✓ 在 2.0× 下被 24dp 圆形裁掉 | 中 | 改 `sizeIn(minWidth/minHeight)` + padding 自适应 |
+| 13 | 公共 `HrBottomBar` 与底栏私有同名 Composable 并存，构成误判陷阱 | 低 | 私有版改名 `AppBottomBar` |
+
+### 一处测量方法修正（重要）
+
+`uiautomator dump` 把带 testTag 的节点报成 `clickable=true` 且 `content-desc` 为空，
+而真正的朗读文本落在**合并子节点**上 —— 据 dump 统计会得到"6 个可点节点全部缺描述"的假阴性。
+已把 AC-10 的判据改为 **Compose 语义层断言**（`AccessibilityTest`，真机通过），
+`uiautomator` 只用于定位、不用于无障碍判定。
+
+### 如实标注的未验证项
+
+- **真机 TalkBack 流程**：本机无 TalkBack 包，只能验证语义节点存在。
+- **`HomeViewModel` 的感知状态**：`READY`/`WEAK` 只在 S6 感知层接入后才可能有真值。
+- **P04/完成页/校准页仍是占位**，FR-15「关键数字 ≥32sp」尚未被真实界面检验。

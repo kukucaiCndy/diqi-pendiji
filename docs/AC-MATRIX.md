@@ -14,7 +14,7 @@
 | AC-07 | 第 3 次收缩点结束 → `completedReps=2`，不补造 | S3+S5 | 单测 + 真机在第 3 次 Contract 中点结束 | `completedReps==2`（非 3）；DB 字段一致 | A | — |
 | AC-08 | 连点两次完成 → 仅一条记录 | S7 | instrumented 双击 + `tools/e2e.sh sql` | `count(TrainingSession)==1`；按钮第二次点击为 no-op | A | — |
 | AC-09 | 系统字体最大档浏览全部页面无截断/重叠 | S9 | `settings put system font_scale 1.3` 与 `2.0` + `am force-stop` 重启 → 逐页截图 | 每页截图人工判读无截断/重叠（Compose **不产出** Layout 溢出日志，不能以此为判据）；关键按钮仍可见可点 | B | 只能人工判读；已从 Manifest 的 `configChanges` 移除 `fontScale`，确保重建路径被真正触发 |
-| AC-10 | TalkBack 完成一次训练 | S9 | `uiautomator dump` 全量断言 `content-desc` 覆盖率 + 人工 | 可点元素 `content-desc` 非空率 100%；主流程控件均有语义 | C | **本机无 TalkBack**（`pm list packages` 无），运行时流程无法验，如实标注 |
+| AC-10 | TalkBack 完成一次训练 | S4 起每阶段 + S9 收口 | **Compose 语义层**仪器化断言（`SemanticsMatcher.keyIsDefined(ContentDescription)`）+ 人工 | 主流程每个可点控件的 Compose 语义节点带 `ContentDescription` | C | **本机无 TalkBack**，运行时流程无法验。**重要测量偏差**：`uiautomator dump` 把带 testTag 的节点报成 `clickable=true` 且 `content-desc` 为空（朗读文本落在合并子节点上），据 dump 统计会得到假阴性 —— 判据必须放 Compose 语义层 |
 | AC-11 | 选「有不适」→ 就医提示，无加量建议 | S7 | 驱动选择「有不适」→ 截图 | 截图含就医/停止提示；**不含**「继续加量/加大」等词 | A | — |
 | AC-12 | 3 天记录 → 七天页数字一致，Day 进度正确 | S7 | `DEBUG_SEED days=3` → 截图 + `tools/e2e.sh sql` | 日历 3 点；累计时长/次数与 DB 聚合一致；`dayIndex` 正确 | A | 造数靠 debug 广播（无 root 改系统时间） |
 | AC-13 | 训练中被杀进程 → 重新打开提供继续/丢弃，无脏记录 | S5 | `am force-stop` → 重启 → 截图 | 出现「继续/丢弃」对话框；选「丢弃」后 DB 无半条记录 | A | — |

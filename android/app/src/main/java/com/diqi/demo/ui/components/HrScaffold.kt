@@ -60,6 +60,60 @@ fun HrPage(
 }
 
 /**
+ * 内容可滚动、**主操作固定在底部**的页面骨架。
+ *
+ * 为什么需要它（AC-09 的直接后果）：372dp 宽 + 正文 20sp + 系统字号 2.0× 时，
+ * 「开始」这类主按钮如果跟着内容一起滚，就会落到屏幕外 ——
+ * 而「一屏一个主任务」要求用户不需要先滚过三段说明才能找到按钮。
+ *
+ * 结构：
+ * ```
+ * ┌──────────────┐
+ * │ 可滚动内容    │ ← weight(1f)
+ * ├──────────────┤
+ * │ 固定主操作    │
+ * └──────────────┘
+ * ```
+ */
+@Composable
+fun HrPageWithAction(
+    modifier: Modifier = Modifier,
+    tag: String? = null,
+    background: Color = HrColor.Canvas,
+    action: @Composable ColumnScope.() -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(background)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = HrSpacing.pageHorizontal)
+                .let { if (tag != null) it.then(Modifier.testTag(tag)) else it },
+            content = content,
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(background)
+                .padding(
+                    start = HrSpacing.pageHorizontal,
+                    end = HrSpacing.pageHorizontal,
+                    top = HrSpacing.xs,
+                    bottom = HrSpacing.sm,
+                ),
+            content = action,
+        )
+    }
+}
+
+/**
  * 底部固定操作区（不随内容滚动）。
  *
  * 主按钮 ≥ 56dp 高、与安全区底部留白 —— 适老化要求手指能稳稳按到。

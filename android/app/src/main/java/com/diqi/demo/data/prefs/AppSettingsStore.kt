@@ -59,11 +59,26 @@ data class SafetyScreening(
         get() = q1ProfessionalGuidance != null && q2NewSymptoms != null &&
             q3PregnancyOrSurgery != null && q4CanFeelContraction != null
 
-    /** 规则 A：需要常驻就医提示 */
-    val clinicalNoticeRequired: Boolean
-        get() = !isComplete ||
-            q2NewSymptoms == ScreeningAnswer.YES ||
+    /**
+     * 真的答到了风险项（第 2、3 题任一为「是」）。
+     *
+     * 首页常驻就医提示条只看这个 —— 文案是"你之前回答过需要留意的情况"，
+     * 不能把"没答完"也算进去，否则直接跳过引导的用户会看到一句关于
+     * 自己从没答过的问题的断言（评审指出的真实缺陷）。
+     */
+    val hasRiskAnswers: Boolean
+        get() = q2NewSymptoms == ScreeningAnswer.YES ||
             q3PregnancyOrSurgery == ScreeningAnswer.YES
+
+    /** 筛查尚未完成（含直接跳过）。用于"建议补做筛查"的软提示，不是就医警告。 */
+    val isIncomplete: Boolean get() = !isComplete
+
+    /**
+     * 规则 A（供需要"宁可多提示"的场景使用，例如训练页）：
+     * 未答完或命中风险项都算需要提示。
+     */
+    val clinicalNoticeRequired: Boolean
+        get() = !isComplete || hasRiskAnswers
 
     /**
      * 规则 B 的第一条推论：不得给出「已学会」结论。
@@ -195,6 +210,21 @@ class AppSettingsStore(context: Context) {
         } else {
             prefs.remove(SAFETY_ACK_AT)
         }
+    }
+
+    /**
+     * 用户选择「跳过安全筛查，直接开始」。
+     *
+     * 只写 `safetyAcknowledgedAt`，**不写任何答案** ——
+     * 于是库里能区分"答完"（四个答案 + 时间戳）与"跳过"（只有时间戳），
+     * 而两者都不会在下次启动时重新弹引导。
+     *
+     * 首版跳过按钮完全没有写库动作，导致跳过的人每次冷启动都重走引导，
+     * 且答完 4 题后再按跳过一次丢失全部答案（评审指出）。
+     */
+    suspend fun acknowledgeScreeningSkipped(atMs: Long) = edit { prefs ->
+        prefs.remove(Q1); prefs.remove(Q2); prefs.remove(Q3); prefs.remove(Q4)
+        prefs[SAFETY_ACK_AT] = atMs
     }
 
     /**

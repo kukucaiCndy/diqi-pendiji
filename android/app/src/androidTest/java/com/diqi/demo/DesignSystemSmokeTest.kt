@@ -1,39 +1,43 @@
 package com.diqi.demo
 
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.diqi.demo.ui.screens.dev.DesignSystemScreen
+import com.diqi.demo.ui.theme.HerRhythmTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Instrumented 冒烟测试（首个，用于证明仪器化测试通路可用）。
+ * 设计系统自检页的仪器化冒烟测试。
  *
- * 为什么 S1 就要有：评审指出"零 instrumented test"，而 AC-08（连点竞态）、
- * AC-16（3 秒判据）、AC-02（≤100ms）这三类判据**纯 adb 物理上做不到**
- * （uiautomator dump 每次耗时 1–2s）。等 S7 才第一次跑 instrumented，
- * 会同时面对新功能 + 新测试框架两类风险。
+ * ## 为什么不通过 MainActivity 进这个页面
  *
- * 现在只验证：
- *   1. 仪器化环境能启动 app 并与 Compose 树交互
- *   2. S1 自检页的测试锚点可被定位（这是全部 E2E 定位的基础）
+ * 首版是 `createAndroidComposeRule<MainActivity>()` 然后断言设计系统页。
+ * 但 MainActivity 的起始页现在取决于"筛查是否已确认" ——
+ * 真机上跑过一次后数据残留，测试就开始随机失败。
+ *
+ * 改为**直接渲染目标 composable**：不依赖导航状态与持久化数据，
+ * 测什么就渲染什么。这也是 UI 测试更该用的写法。
  */
 @RunWith(AndroidJUnit4::class)
 class DesignSystemSmokeTest {
 
     @get:Rule
-    val composeRule = createAndroidComposeRule<MainActivity>()
+    val composeRule = createComposeRule()
 
     @Test
     fun 设计系统自检页可渲染且测试锚点存在() {
+        composeRule.setContent { HerRhythmTheme { DesignSystemScreen() } }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("dev.design_system.root").assertExists()
     }
 
     @Test
     fun 页面关键文案可被定位() {
+        composeRule.setContent { HerRhythmTheme { DesignSystemScreen() } }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("HerRhythm DS v1.0").assertExists()
     }
