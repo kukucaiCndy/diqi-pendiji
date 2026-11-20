@@ -29,7 +29,7 @@ import com.diqi.demo.ui.UiTag
 import com.diqi.demo.ui.components.ChipTone
 import com.diqi.demo.ui.components.HrBanner
 import com.diqi.demo.ui.components.HrCard
-import com.diqi.demo.ui.components.HrPageWithAction
+import com.diqi.demo.ui.components.HrPageWithActionLazy
 import com.diqi.demo.ui.components.HrPrimaryButton
 import com.diqi.demo.ui.components.HrSecondaryButton
 import com.diqi.demo.ui.components.HrStatusChip
@@ -186,7 +186,7 @@ fun TrainingScreen(
         )
     }
 
-    HrPageWithAction(
+    HrPageWithActionLazy(
         modifier = modifier,
         tag = UiTag.P04_ROOT,
         action = {
@@ -211,38 +211,43 @@ fun TrainingScreen(
             }
         },
     ) {
-        // ── 视频区（未启用感知时深色占位）────────────────────────────────
-        VideoAreaPlaceholder(demoMode = state.demoMode)
+        // 每个区块一个 item：推帧只会重测倒计时那一项，
+        // 而不是整块滚动内容（Column 会全量重测）。
+        item {
+            // ── 视频区（未启用感知时深色占位）────────────────────────────
+            VideoAreaPlaceholder(demoMode = state.demoMode)
+        }
 
-        VSpace(HrSpacing.xs)
+        item { VSpace(HrSpacing.xs) }
 
         // FR-01 分流：训练页常驻提示条
         if (state.clinicalNotice) {
-            HrBanner(
-                text = "按之前的回答，练到不舒服就停下来，并先咨询医生。",
-                tone = ChipTone.WARN,
-            )
-            VSpace(HrSpacing.xs)
+            item {
+                HrBanner(
+                    text = "按之前的回答，练到不舒服就停下来，并先咨询医生。",
+                    tone = ChipTone.WARN,
+                )
+                VSpace(HrSpacing.xs)
+            }
         }
 
-        // 会每秒变化的一切都收在 TickingSection 里：
-        // 这样父级（视频区/免责/按钮）不会随帧重组。
-        TickingSection(vm = vm, paused = state.paused)
+        // 每秒变化的一切收在同一个 item 的 TickingSection 里
+        item { TickingSection(vm = vm, paused = state.paused) }
 
         // ── 指标区 ───────────────────────────────────────────────────────
-        MetricsSection(vm = vm, demoMode = state.demoMode)
+        item { MetricsSection(vm = vm, demoMode = state.demoMode) }
 
-        VSpace(HrSpacing.sm)
-
-        // ── 常驻免责文案（§5.6 强制）────────────────────────────────────
-        Text(
-            text = "上述内容反映身体状态，不代表盆底肌收缩质量。",
-            style = HrType.disclaimer,
-            color = HrColor.InkSecondary,
-            modifier = Modifier.testTag(UiTag.P04_DISCLAIMER),
-        )
-
-        VSpace(HrSpacing.lg)
+        item {
+            VSpace(HrSpacing.sm)
+            // ── 常驻免责文案（§5.6 强制）────────────────────────────────
+            Text(
+                text = "上述内容反映身体状态，不代表盆底肌收缩质量。",
+                style = HrType.disclaimer,
+                color = HrColor.InkSecondary,
+                modifier = Modifier.testTag(UiTag.P04_DISCLAIMER),
+            )
+            VSpace(HrSpacing.lg)
+        }
     }
 }
 
