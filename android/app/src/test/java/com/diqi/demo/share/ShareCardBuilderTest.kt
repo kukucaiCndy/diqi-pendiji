@@ -1,6 +1,7 @@
 package com.diqi.demo.share
 
 import com.diqi.demo.data.repo.WeekSummary
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,20 +56,37 @@ class ShareCardBuilderTest {
     }
 
     @Test
-    fun 文案不得出现疗效类表述() {
-        val banned = listOf("治愈", "改善", "疗效", "肌力", "康复")
+    fun 文案不得出现任何全局禁词() {
+        // 首版这里自建了一个 5 词的表，与 BannedWords.WORDS 分叉 ——
+        // 于是"血压/血氧/情绪/心理评分"等词在分享文案里出现也不会变红。
+        // 改为直接遍历全局词表：改词表即全局生效。
         (0..7).forEach { days ->
             val text = ShareCardBuilder.build(summary(days, days * 300L), cycleDayIndex = 1).toShareText()
-            banned.forEach { word ->
-                assertFalse("不得出现「$word」：$text", text.contains(word))
-            }
+            val hits = com.diqi.demo.core.text.BannedWords.scan(text)
+            assertTrue("分享文案命中禁词 $hits：$text", hits.isEmpty())
         }
     }
 
     @Test
-    fun 分享文本会说明不含身体数据() {
+    fun 分享文本只有标题与正文两段_不夹带第四项信息() {
+        // FR-13 只允许"完成天数 / 累计时长 / 鼓励语"三项。
+        // 首版在末尾追加了「第 N 天」，那是第四项 —— 分享出去无法撤回。
         val text = ShareCardBuilder.build(summary(3, 600), cycleDayIndex = 3).toShareText()
-        assertTrue("应明确说明不含身体数据（避免被误读成体检报告）", text.contains("不含任何身体数据"))
+        assertFalse("不得夹带天数序号：$text", text.contains("第 3 天"))
+        assertFalse("不得出现免责尾注：$text", text.contains("不含任何身体数据"))
+        val lines = text.trim().lines()
+        assertEquals("分享文本应为 标题 + 2 行正文", 3, lines.size)
+    }
+
+    @Test
+    fun 分享文本不得包含任何身体数据字段名() {
+        // 首版在末尾追加「…不含任何身体数据」作为免责尾注，
+        // 但那让"心率/呼吸率/HRV"这些字眼出现在分享文本里（虽是否定式），
+        // 且构成 FR-13 之外的第四段信息。现在改为**完全不带这类字眼**。
+        val text = ShareCardBuilder.build(summary(3, 600), cycleDayIndex = 3).toShareText()
+        listOf("身体数据", "心率", "呼吸率", "HRV").forEach { word ->
+            assertFalse("分享文本不应出现「$word」：$text", text.contains(word))
+        }
     }
 
     @Test

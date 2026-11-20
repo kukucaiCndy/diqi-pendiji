@@ -58,13 +58,18 @@ object ShareCardBuilder {
 data class ShareCard(
     val title: String,
     val body: List<String>,
-    /** 七天周期里的第几天：让人知道这是体验期的第几天，不暗示疗效 */
+    /** 七天周期里的第几天。**只用于页面展示，不进分享文本**（FR-13 只允许三项）。 */
     val dayIndex: Int,
 ) {
-    /** 最终分享出去的纯文本。 */
+    /**
+     * 最终分享出去的纯文本。
+     *
+     * **只允许三项**：完成天数、累计时长、鼓励语（FR-13 原文）。
+     * 首版在这里追加了「第 $dayIndex 天」，那成了第四项信息 ——
+     * 分享出去的东西无法撤回，所以宁可少说一句，也不要多带一个字段。
+     */
     fun toShareText(): String = buildString {
         appendLine(title)
         body.forEach { appendLine(it) }
-        append("（第 $dayIndex 天 · 仅供家人了解练习情况，不含任何身体数据）")
     }
 }

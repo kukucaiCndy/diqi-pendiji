@@ -245,7 +245,7 @@ fun CompleteScreen(
             HrBanner(
                 text = "先暂停练习，并尽快咨询医生或专业人员。等情况明确后再决定是否继续。",
                 tone = ChipTone.WARN,
-                tag = UiTag.P05_DISCOMFORT_NOTICE,
+                tag = UiTag.P05_DISCOMFORT_BANNER,
             )
         }
 

@@ -168,7 +168,8 @@ fun TrainingScreen(
 
     if (state.saveFailed) {
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { },
+            // 允许点外部关闭 = 等同于"先不保存"，避免出现关不掉的死弹窗
+            onDismissRequest = { vm.abandonOnSaveFailure() },
             title = { Text("这次记录没保存成功", style = HrType.titleSmall, color = HrColor.Ink) },
             text = {
                 Text(
@@ -178,8 +179,13 @@ fun TrainingScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { vm.confirmStop() }) {
-                    Text("知道了", style = HrType.button, color = HrColor.Brand)
+                TextButton(onClick = { vm.retrySave() }) {
+                    Text("再试一次", style = HrType.button, color = HrColor.Brand)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.abandonOnSaveFailure() }) {
+                    Text("先不保存", style = HrType.button, color = HrColor.InkSecondary)
                 }
             },
             containerColor = HrColor.Surface,
@@ -338,11 +344,20 @@ internal fun MetricArea(metric: MetricUiState, demoMode: Boolean = false) {
                         tone = ChipTone.NEUTRAL,
                         tag = UiTag.P04_METRIC_QUALITY,
                     )
+                    // QualityGate 给的 banner（例如"看不到脸了，请把手机放稳"）
+                    // 必须显示出来 —— 首版把它丢了，用户只知道"信号暂失"却不知道该怎么办。
+                    if (metric.banner != null) {
+                        Text(
+                            text = metric.banner,
+                            style = HrType.bodySmall,
+                            color = HrColor.Warn,
+                            modifier = Modifier.testTag(UiTag.P04_METRIC_PLACEHOLDER),
+                        )
+                    }
                     Text(
                         text = "节律提示照常进行，不影响练习。",
                         style = HrType.bodySmall,
                         color = HrColor.InkSecondary,
-                        modifier = Modifier.testTag(UiTag.P04_METRIC_PLACEHOLDER),
                     )
                 }
             }

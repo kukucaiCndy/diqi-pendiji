@@ -117,7 +117,14 @@ class TrainingViewModel(
                 started = true
                 sessionStartedAtMs = System.currentTimeMillis() - coordinator.elapsedActiveMs()
                 viewModelScope.launch { sensor.start() }
-                _state.value = _state.value.copy(clinicalNotice = clinical)
+                // 关键：把 paused 对齐到会话真实状态。
+                // 首版这里只置 started，于是"上次是暂停状态"被认领后，
+                // 按钮显示"暂停"、圆环显示活动色，点一次还被引擎的幂等挡住——
+                // 用户要点两次才能真的恢复。
+                _state.value = _state.value.copy(
+                    clinicalNotice = clinical,
+                    paused = running.status == TrainingStatus.PAUSED,
+                )
                 observeFrames()
                 return@launch
             }
@@ -215,17 +222,31 @@ class TrainingViewModel(
                 if (snap.elapsedSec < QualityGate.HR_READY_SEC) {
                     MetricUiState.Establishing(snap.elapsedSec)
                 } else {
-                    MetricUiState.NoData(verdict.reason)
+                    MetricUiState.NoData(verdict.reason, verdict.banner)
                 }
         }
     }
 
     // ── 交互 ──────────────────────────────────────────────────────────────
 
+    /**
+     * 暂停/恢复。
+     *
+     * **不能乐观取反**：`engine.pause()` 在"已结束"时是空操作，
+     * `resume()` 在"未暂停"时也是空操作。乐观取反会让界面说"已暂停"
+     * 而引擎其实还在跑（或已结束）。所以调完以后从引擎回读真实状态。
+     */
     fun togglePause() {
-        val nowPaused = !_state.value.paused
-        if (nowPaused) coordinator.pause() else coordinator.resume()
-        _state.value = _state.value.copy(paused = nowPaused)
+        if (_state.value.paused) coordinator.resume() else coordinator.pause()
+        syncPausedFromEngine()
+    }
+
+    /** 把 UI 的 paused 对齐到引擎真实状态。 */
+    private fun syncPausedFromEngine() {
+        val realPaused = coordinator.currentFrame().status == TrainingStatus.PAUSED
+        if (_state.value.paused != realPaused) {
+            _state.value = _state.value.copy(paused = realPaused)
+        }
     }
 
     /** 给"结束确认"弹窗用的即时完成次数（弹窗是低频场景，直接取一次即可） */
@@ -246,6 +267,19 @@ class TrainingViewModel(
         if (savedId == null) {
             finishSession(coordinator.currentFrame())
         }
+    }
+
+    /** 保存失败后重试。 */
+    fun retrySave() {
+        _state.value = _state.value.copy(saveFailed = false)
+        savedId = null
+        finishSession(coordinator.currentFrame())
+    }
+
+    /** 保存失败后放弃：清会话并允许离开（用户已知情）。 */
+    fun abandonOnSaveFailure() {
+        _state.value = _state.value.copy(saveFailed = false, finished = true, savedSessionId = null)
+        container.releaseTrainingSession()
     }
 
     fun repeatVoice() {
@@ -312,15 +346,10 @@ class TrainingViewModel(
                     container.releaseTrainingSession()
                 }
                 .onFailure {
-                    // 保存失败必须让用户知道，并且释放会话 ——
-                    // 否则 `_activeTraining` 留在"已 finished"状态，
-                    // 下次 obtainTrainingSession 会静默丢弃它（记录静默丢失）。
-                    _state.value = _state.value.copy(
-                        finished = true,
-                        savedSessionId = null,
-                        saveFailed = true,
-                    )
-                    container.releaseTrainingSession()
+                    // 保存失败**不能**置 finished —— 置了会立刻导航到完成页，
+                    // 失败弹窗只被组合一帧就消失（等于没提示）。
+                    // 也不释放会话：留着重试的机会。
+                    _state.value = _state.value.copy(saveFailed = true)
                 }
         }
     }

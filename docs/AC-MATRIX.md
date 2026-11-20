@@ -12,13 +12,13 @@
 | AC-05 | 锁屏 30s 返回，进度误差 ≤1s，指标恢复 | S5+S6 | `KEYCODE_POWER` → `sleep 30` → 唤醒 → 截图 + `logcat` | `phaseRemaining` 与理论值差 ≤1000ms；返回后指标区 3s 内退出「信号暂失」 | A | 指标恢复依赖 `SensorCoordinator` 窗口保留（D12）；真实 SDK 未验证 |
 | AC-06 | 来电打断音频，训练不中断，后续提示正常 | S3+S5 | 音频焦点抢占：`AudioManager` 请求 `AUDIOFOCUS_LOSS_TRANSIENT` 的测试入口 + 真人拨号 | 训练状态机 state 不变；被抢那句跳过；下一阶段语音正常播放 | B | 真机无 `cmd telecom` 注入通道，无法脚本模拟来电 |
 | AC-07 | 第 3 次收缩点结束 → `completedReps=2`，不补造 | S3+S5 | 单测 + 真机在第 3 次 Contract 中点结束 | `completedReps==2`（非 3）；DB 字段一致 | A | — |
-| AC-08 | 连点两次完成 → 仅一条记录 | S7 | instrumented 双击 + `tools/e2e.sh sql` | `count(TrainingSession)==1`；按钮第二次点击为 no-op | A | — |
+| AC-08 | 连点两次完成 → 仅一条记录 | S7 | `tools/e2e.sh sql` + 代码审阅 | 数据层 upsert 幂等已由 `HerRhythmDaoTest` 真库验证；**VM 层"只保存一次"无自动化测试** | B | 首版标 A 无实现支撑，已降级。要真验需补 `TrainingViewModelTest` |
 | AC-09 | 系统字体最大档浏览全部页面无截断/重叠 | S9 | `settings put system font_scale 1.3` 与 `2.0` + `am force-stop` 重启 → 逐页截图 | 每页截图人工判读无截断/重叠（Compose **不产出** Layout 溢出日志，不能以此为判据）；关键按钮仍可见可点 | B | 只能人工判读；已从 Manifest 的 `configChanges` 移除 `fontScale`，确保重建路径被真正触发 |
 | AC-10 | TalkBack 完成一次训练 | S4 起每阶段 + S9 收口 | **Compose 语义层**仪器化断言（`SemanticsMatcher.keyIsDefined(ContentDescription)`）+ 人工 | 主流程每个可点控件的 Compose 语义节点带 `ContentDescription` | C | **本机无 TalkBack**，运行时流程无法验。**重要测量偏差**：`uiautomator dump` 把带 testTag 的节点报成 `clickable=true` 且 `content-desc` 为空（朗读文本落在合并子节点上），据 dump 统计会得到假阴性 —— 判据必须放 Compose 语义层 |
 | AC-11 | 选「有不适」→ 就医提示，无加量建议 | S7 | 驱动选择「有不适」→ 截图 | 截图含就医/停止提示；**不含**「继续加量/加大」等词 | A | — |
 | AC-12 | 3 天记录 → 七天页数字一致，Day 进度正确 | S7 | `DEBUG_SEED days=3` → 截图 + `tools/e2e.sh sql` | 日历 3 点；累计时长/次数与 DB 聚合一致；`dayIndex` 正确 | A | 造数靠 debug 广播（无 root 改系统时间） |
 | AC-13 | 训练中被杀进程 → 重新打开提供继续/丢弃，无脏记录 | S5 | `am force-stop` → 重启 → 截图 | 出现「继续/丢弃」对话框；选「丢弃」后 DB 无半条记录 | A | — |
-| AC-14 | 文案检索无禁词；指标区免责说明存在 | S9 | `tools/scan-banned.sh` + instrumented | grep 命中 0；UI 断言免责文本与「节律提示」存在 | A | 语义级禁令（心率≠收缩）靠文案白名单人工评审 |
+| AC-14 | 文案检索无禁词；指标区免责说明存在 | S9 | `tools/scan-banned.sh` | 字面禁词 grep 命中 0（exit=0）；「节律提示」有 `P04_RHYTHM_RING_LABEL` 且在 `RhythmRing` 渲染 | B | **UI 层"免责文本存在"没有自动化断言**（`UiTagTest` 只断言常量非空）。语义级禁令靠人工评审 |
 | AC-15 | 开相机前 30s 显示「信号建立中」，无数字 | S6 | 进入训练 → 30s 内多次截图 | 指标区文本 == 「信号建立中」；无 `\d{2,3}` 数字节点 | A | 真实 SDK 未接，用桩 + Demo 的 30s 门限验证 |
 | AC-16 | 遮脸 5s → 3s 内变 NO_DATA，节律继续 | S6 | `DemoSensor.injectFaceLost()` + 真机物理遮挡（人工） | 故障注入后 ≤3s 指标区转「信号暂失」；训练 state 不变 | B | 物理遮挡无法脚本，逻辑路径已注入覆盖 |
 | AC-17 | 强光/逆光 → 校准页提示光照问题 | S6 | `injectLowLight()` + 真机物理（人工） | 校准页出现「光线不足」提示条；非训练后报错 | B | 同上 |

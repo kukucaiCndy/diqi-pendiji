@@ -23,8 +23,17 @@ sealed interface MetricUiState {
     /** 已启用但信号尚未建立（前 30 秒）。**不得显示任何数字**（AC-15）。*/
     data class Establishing(val elapsedSec: Int) : MetricUiState
 
-    /** NO_DATA：未授权 / SDK 不可用 / 离框 > 3s。整块置灰，显示「信号暂失」。*/
-    data class NoData(val reason: MissingReason) : MetricUiState
+    /**
+     * NO_DATA：未授权 / SDK 不可用 / 离框 > 3s。整块置灰，显示「信号暂失」。
+     *
+     * [banner] 是"该怎么办"的提示（例如"看不到脸了，请把手机放稳"）。
+     * 首版没有这个字段，于是 QualityGate 产出的提示被丢弃，用户只知道出问题、
+     * 不知道如何处理。
+     */
+    data class NoData(
+        val reason: MissingReason,
+        val banner: String? = null,
+    ) : MetricUiState
 
     /** INVALID：有数据但不可信（SQI 低于门限）。显示「--」+「信号弱」。*/
     data class Invalid(val sqi: Float?) : MetricUiState

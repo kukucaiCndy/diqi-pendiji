@@ -92,12 +92,24 @@ class FaceAnalyzer(
             val input = InputImage.fromBitmap(bitmap, image.imageInfo.rotationDegrees)
 
             detector.process(input)
-                .addOnSuccessListener { faces -> handleFaces(bitmap, faces, dtSec) }
+                .addOnSuccessListener { faces ->
+                    // handleFaces 里有原生桥、ROI 转换、亮度抽样，都可能抛异常。
+                    // 首版没有 try/finally —— 一旦抛出，既进不了外层 catch
+                    // 也走不到 complete 回调，于是 busy 永远为 true、image 永远不关，
+                    // 分析器静默死亡（画面卡住），这是最难排查的一类 bug。
+                    try {
+                        handleFaces(bitmap, faces, dtSec)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "handleFaces 异常", e)
+                        onFrame(FaceFrame(faceFound = false))
+                    } finally {
+                        busy.set(false)
+                        image.close()
+                    }
+                }
                 .addOnFailureListener { e ->
                     Log.w(TAG, "人脸检测失败", e)
                     onFrame(FaceFrame(faceFound = false))
-                }
-                .addOnCompleteListener {
                     busy.set(false)
                     image.close()
                 }

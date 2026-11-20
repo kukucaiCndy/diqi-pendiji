@@ -84,12 +84,25 @@
 
 ## 4. 质量基线
 
-- 单测 **146 项 / 0 失败**
-- 仪器化 **32 项 / 0 失败**（含 20 项真库 DAO + 8 项指标区四态渲染）
+- 单测 **135 项 / 0 失败**
+- 仪器化 **32 项 / 0 失败**（含 20 项真库 DAO + 8 项指标区四态渲染）—— **最后一次全绿时设备在线；之后设备掉线，未能复跑**
 - lint **0 error**（仅 GradleDependency 版本提示）
 - 禁词扫描 **exit=0**
 - 冷启动 **636–675 ms**
 - Git：14 个提交，每阶段一个，工作区干净
+
+## 4.1 最终复审发现但**未修**的问题（如实列出）
+
+最后一轮对全部代码做了三路复审，修掉 7 个确定性缺陷后，仍有以下问题**没有修**：
+
+| # | 问题 | 为什么没修 / 影响 |
+| --- | --- | --- |
+| 1 | **演示模式缺"全屏水印"**：实际只有指标卡内一枚 chip（`P04_DEMO_WATERMARK`），`UiTag.DEMO_WATERMARK` 常量 0 引用 | FR-14/AC-19 原文写"全屏水印"。需要产品裁定：接受 chip 就改判据，否则要加水印层 |
+| 2 | **关闭演示模式会删除演示记录**（`SettingsScreen` 里 `deleteSimulated()`） | 与 FR-14"记录页以水印样式展示"冲突。统计侧已有 SQL 层过滤，不存在污染风险，所以这是**产品语义**问题 |
+| 3 | **`TrainingViewModel` 零测试**（326 行，被 `test/` 与 `androidTest/` 引用 0 次） | 最关键接入点。AC-08 的"只保存一次"、AC-19 的"演示→simulated"、AC-13 的恢复分流、`saveFailed` 全无自动化覆盖。要真验需先给 `AppContainer.clock` 加构造参数 |
+| 4 | **P03 校准页缺免责文案** | 该页显示 SQI 等数值，§5.6 要求指标旁常驻免责 |
+| 5 | **若干测试在断言自己写的字面量**（`BannedWordsTest` 的免责句、`UiTagTest` 的五行 `isNotBlank`） | 已有 3 处修好（`SevenDayPlanTest`/`ShareCardBuilderTest`/`MetricAreaStateTest` 的光照文案仍自证），其余待补 |
+| 6 | **`QualityGateTest` 有 1 条零信息断言**（`assertNull(null)`）、`TrainingSessionCoordinatorTest` 有 1 个空占位测试 | 不影响正确性，但会虚增测试计数 |
 
 ## 5. 需要产品/临床确认的事项
 

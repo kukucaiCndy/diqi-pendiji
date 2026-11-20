@@ -109,10 +109,20 @@ class TrainingEngine(
         pausedAtElapsedMs = null
     }
 
-    /** 用户主动结束：**冻结时间**，保留已完成次数（AC-07）。 */
+    /**
+     * 用户主动结束：**冻结时间**，保留已完成次数（AC-07）。
+     *
+     * 注意顺序：先把"暂停中那一段"结算进累计值，否则最后一段暂停会从
+     * `pausedMs()` 里消失，库里记的暂停时长短于真实值。
+     */
     fun stop(nowElapsedMs: Long = clock.nowMs()) {
         if (frozenElapsedMs != null) return
+        // 冻结"活动时长"要在结算暂停之前（此时 pausedAt 仍有效，elapsed 才是冻结值）
         frozenElapsedMs = elapsedActiveMs(nowElapsedMs)
+        // 结算最后一段暂停
+        pausedAtElapsedMs?.let { pausedAt ->
+            accumulatedPausedMs += (nowElapsedMs - pausedAt).coerceAtLeast(0L)
+        }
         pausedAtElapsedMs = null
     }
 

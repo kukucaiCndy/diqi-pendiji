@@ -99,7 +99,15 @@ object UiTag {
     const val P05_DIFFICULTY_OK = "p05.difficulty.ok"
     const val P05_DIFFICULTY_HARD = "p05.difficulty.hard"
     const val P05_DISCOMFORT_TOGGLE = "p05.discomfort_toggle"
+    /** 「有不适」选项按钮本身 */
     const val P05_DISCOMFORT_NOTICE = "p05.discomfort_notice"
+    /**
+     * 选中「有不适」后出现的**警示条**。
+     *
+     * 必须与上面的选项按钮分开：首版两处共用同一个 tag，于是"警示条出现了吗"
+     * 这条断言会被常驻的选项按钮本身满足 —— 假通过。
+     */
+    const val P05_DISCOMFORT_BANNER = "p05.discomfort_banner"
     const val P05_SAVE_BUTTON = "p05.save_button"
     const val P05_DONE_BUTTON = "p05.done_button"
 
