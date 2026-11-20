@@ -581,11 +581,9 @@ private fun TickingSection(
             )
         }
         Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = frame.countdownText,
-                style = HrType.monoDisplay,
-                color = HrColor.Ink,
-            )
+            // 倒计时只保留圆环中心那一处（设计稿 P04 的焦点）。
+            // 首版这里还重复显示了一行 36sp 等宽倒计时 —— 同一秒级信息出现两次，
+            // 既让用户要在两个位置之间选，也白白多一次大字号排版（掉帧的参与者之一）。
             Text(
                 "共 ${frame.phaseTotalMs / 1000} 秒",
                 style = HrType.labelSmall,
