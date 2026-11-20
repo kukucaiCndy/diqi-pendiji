@@ -15,3 +15,6 @@ captures/
 
 # 本地环境
 *.log
+
+# 设计工具（外部工具目录，非工程资产）
+design/ui-ux-pro-max/
