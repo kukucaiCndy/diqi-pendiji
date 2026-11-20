@@ -196,10 +196,9 @@ fun HerRhythmNavHost(
                     )
                 }
                 composable(Routes.CALIBRATE) {
-                    PlaceholderScreen(
-                        title = "感知校准（可选）",
-                        message = "摄像头预览、人脸框、光照提示与设备诊断，会在感知层实现时完成。",
-                        tag = "calibrate.root",
+                    com.diqi.demo.ui.screens.calibrate.CalibrateScreen(
+                        onStartWithSensor = { navController.popBackStack() },
+                        onSkip = { navController.popBackStack() },
                     )
                 }
                 composable(Routes.COMPLETE) {
