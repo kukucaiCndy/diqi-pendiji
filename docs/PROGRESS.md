@@ -867,3 +867,60 @@ elapsedActiveMs / pausedMs / pauseCount / start / release / currentFrame` 的最
 
 单测 144 项仍全绿。**但效果无法量化** —— 设备自第 10 轮起 `Connection refused`，
 `gfxinfo` 跑不了。所以这里只记"改了什么"，不记"改善了多少"。
+
+---
+
+## 2026-11-21 · 设置页死项与演示模式修复
+
+### 起因
+
+用户反馈：设置页多项为"死项"（点击无反应），演示模式"开了和没开一样"。
+
+### 根因（逐条定位，非推测）
+
+1. **演示建立期 30s 无反馈**：`DemoSensor` 建立期沿用真实源的 30s/60s，
+   演示场景下用户盯着"建立中"半分钟看不到任何进展，误以为演示模式失效。
+2. **水印仅 11sp chip**：原水印只是训练页右上角一个小 chip（`demo_badge`），
+   不满足 FR-14「全屏斜向水印」的演示防伪要求。
+3. **设置行 onClick 空实现**：隐私说明、重做校准、设备诊断、试听引导语音、
+   提醒时间选择等行的点击回调为空或未接导航，即"死项"。
+4. **ReminderWorker 不读 reminderTime**：提醒 Worker 的初始延迟是固定值，
+   未读取用户在设置里选的 `HH:mm`，导致"改了提醒时间不生效"。
+5. **清除数据无二次确认**：点"清除所有数据"直接清库，没有二次确认弹窗，
+   存在误触风险。
+6. **audioSpeed 无消费者**：设置页有 `audioSpeed` 选项，但训练初始化时
+   从未调用 `voice.setSpeed`，即语音速度设置不生效。
+
+### 修复清单
+
+| # | 修复项 | 说明 |
+| --- | --- | --- |
+| 1 | 隐私说明详情页 (L2-06) | 新增 `PrivacyScreen`，路由 `privacy`，复用 P03 卡片风格 |
+| 2 | 重做校准 / 设备诊断导航 | 设置行 onClick 复用 P03 路由，不再空实现 |
+| 3 | 试听引导语音 | 设置页可试听当前引导语音，验证 `audioSpeed` 效果 |
+| 4 | Material3 时间选择器 | 提醒时间用 M3 `TimePicker`，写入 `reminderTime` (HH:mm) |
+| 5 | ReminderWorker 按 HH:mm 计算初始延迟 | 读取 `reminderTime`，算到下一个该时刻的毫秒延迟 |
+| 6 | 清除数据二次确认 | `HrDialog` 二次确认弹窗，确认后才清库 |
+| 7 | SettingsDeps 接口化 | 抽 `SettingsDeps` 接口，`AppContainer` 实现，JVM 单测可注入 |
+| 8 | FR-14 全屏斜向水印 | `common.demo_watermark`：全屏 Canvas 斜向重复文字水印 |
+| 9 | DemoSensor 建立期缩短 | 30s→3s、60s→6s（真实源仍 30s，仅演示源缩短） |
+| 10 | QualityGate.evaluate 可配 hrReadySec | `hrReadySec` 参数化，演示用短建立期 |
+| 11 | 训练初始化 voice.setSpeed | `TrainingViewModel` 初始化时读 `audioSpeed` 并 `voice.setSpeed` |
+| 12 | P04 重复提示按钮 (FR-05) | 训练中可重复播放当前阶段引导语音 |
+
+### 验证
+
+- **单测**：156 项 / 0 失败（较上轮 144 项新增 12 项：
+  `SettingsViewModelTest` 9 项 + `ReminderWorkerDelayTest` 2 项 + `QualityGateTest` 1 项）。
+- **lint**：0 error。
+- **禁词检查**（`exit` / `System.exit`）：exit 0，未命中。
+- **真机验证**：设备 FY23175108A5，十项全过、零崩溃。截图见 `docs/evidence/fix-verify-*.png`（12 张）：
+  01 首页 → 02 设置页 → 03 隐私说明 → 04 设备诊断/重做校准 → 05 试听语音 →
+  06 时间选择器/改后生效 → 07 清除二次确认 → 08 演示训练/完成 → 09 关闭演示。
+
+### 遗留（如实标注，未做粉饰）
+
+1. **关闭演示是否删除演示记录**：待产品裁定，本轮不动。
+2. **FacePhys 仍为契约桩**：`facephys-api` 的 `StubRppgEngine` 不产生生理数值，
+   演示数据来自 `DemoSensor` 合成，非真实 rPPG 取数。
+3. **掉帧优化未动**：本轮聚焦设置死项与演示模式，训练页掉帧问题（见 S9 补充 8）未做进一步优化。
