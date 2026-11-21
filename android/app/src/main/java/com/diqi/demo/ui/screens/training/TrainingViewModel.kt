@@ -12,6 +12,7 @@ import com.diqi.demo.domain.training.TrainingParams
 import com.diqi.demo.data.db.MissingReason
 import com.diqi.demo.domain.quality.QualityGate
 import com.diqi.demo.domain.training.TrainingStatus
+import com.diqi.demo.sensor.DemoSensor
 import com.diqi.demo.sensor.SensorAdapter
 import com.diqi.demo.training.TrainingSessionCoordinator
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -108,6 +109,8 @@ class TrainingViewModel(
             val clinical = settings.screening.hasRiskAnswers
             demoMode = settings.isDemoMode
             _state.value = _state.value.copy(demoMode = settings.isDemoMode)
+            // 语音速度真正生效（FR-05）：进入训练页时用当前设置值初始化播放器速度
+            container.voice.setSpeed(settings.audioSpeed)
             sensor = container.sensorFor(demoMode, cameraEnabled)
             // 先看内存里是否已有**正在进行**的会话（锁屏/重建后重新进入）
             val running = coordinator.currentFrame()
@@ -203,8 +206,10 @@ class TrainingViewModel(
         if (snap.missingReason == MissingReason.NOT_ENABLED) {
             return MetricUiState.NotEnabled
         }
+        // 演示模式缩短信号建立期（DemoSensor.HR_READY_SEC=3），真实源保持 30s
+        val hrReadySec = if (demoMode) DemoSensor.HR_READY_SEC else QualityGate.HR_READY_SEC
         // 用数据源真实累计的 faceLostMs（不再拍常量）
-        val verdict = QualityGate.evaluate(snap)
+        val verdict = QualityGate.evaluate(snap, hrReadySec = hrReadySec)
         return when (verdict.state) {
             com.diqi.demo.data.db.QualityState.VALID -> MetricUiState.Valid(
                 heartRateBpm = snap.heartRateBpm,
@@ -220,8 +225,8 @@ class TrainingViewModel(
             )
             com.diqi.demo.data.db.QualityState.INVALID -> MetricUiState.Invalid(snap.sqi)
             com.diqi.demo.data.db.QualityState.NO_DATA ->
-                if (snap.elapsedSec < QualityGate.HR_READY_SEC) {
-                    MetricUiState.Establishing(snap.elapsedSec)
+                if (snap.elapsedSec < hrReadySec) {
+                    MetricUiState.Establishing(snap.elapsedSec, hrReadySec)
                 } else {
                     MetricUiState.NoData(verdict.reason, verdict.banner)
                 }

@@ -20,8 +20,8 @@ sealed interface MetricUiState {
     /** 未启用感知：整块不显示，只留一行「未启用感知」（FR-06 原文）*/
     data object NotEnabled : MetricUiState
 
-    /** 已启用但信号尚未建立（前 30 秒）。**不得显示任何数字**（AC-15）。*/
-    data class Establishing(val elapsedSec: Int) : MetricUiState
+    /** 已启用但信号尚未建立（前 N 秒）。**不得显示任何数字**（AC-15）。*/
+    data class Establishing(val elapsedSec: Int, val totalSec: Int = 30) : MetricUiState
 
     /**
      * NO_DATA：未授权 / SDK 不可用 / 离框 > 3s。整块置灰，显示「信号暂失」。

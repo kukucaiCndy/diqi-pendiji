@@ -151,8 +151,8 @@ class DemoSensor(
     override fun snapshot(nowElapsedSec: Int): SensorSnapshot {
         if (!started) return SensorSnapshot.NOT_ENABLED
 
-        // 前 30 秒一律"信号建立中"，与真实源的行为保持一致 ——
-        // 否则演示模式会让人以为真实源也能立刻出数（AC-15 的对照）
+        // 演示模式缩短信号建立期到 3 秒，让演示「马上有」——
+        // 真实源仍保持 30 秒（AC-15 的对照）
         if (nowElapsedSec < HR_READY_SEC) {
             return SensorSnapshot(
                 state = QualityState.NO_DATA,
@@ -209,7 +209,7 @@ class DemoSensor(
         return SensorSnapshot(
             state = QualityState.VALID,
             heartRateBpm = hr,
-            // 呼吸率 60 秒后才出现，与 §5.4 一致
+            // 呼吸率在 BR_READY_SEC 后出现（演示模式缩短到 6s）
             breathingRatePerMin = if (nowElapsedSec >= BR_READY_SEC) {
                 brBase + 1.5f * kotlin.math.sin(t / 13f)
             } else {
@@ -239,7 +239,9 @@ class DemoSensor(
     )
 
     companion object {
-        const val HR_READY_SEC = 30
-        const val BR_READY_SEC = 60
+        /** 演示模式信号建立秒数（缩短到 3s，让演示「马上有」）*/
+        const val HR_READY_SEC = 3
+        /** 演示模式呼吸率出现秒数（缩短到 6s）*/
+        const val BR_READY_SEC = 6
     }
 }

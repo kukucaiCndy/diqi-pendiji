@@ -33,12 +33,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight as TextFontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -93,13 +104,17 @@ fun TrainingScreen(
     val meta by vm.state.collectAsState()
     val frame by vm.frames.collectAsState()
     val metric by vm.metric.collectAsState()
+    val textMeasurer = rememberTextMeasurer()
 
     LaunchedEffect(meta.finished) {
         if (meta.finished) onFinished(meta.savedSessionId)
     }
 
+    // FR-14 全屏演示水印：覆盖层画在内容之上（8% 透明度不影响阅读），
+    // 不加 clickable/pointerInput，触摸穿透。容器 Box 只为承载覆盖层。
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(HrWhite)
             .windowInsetsPadding(WindowInsets.safeDrawing)
@@ -214,6 +229,28 @@ fun TrainingScreen(
                 modifier = Modifier.testTag(UiTag.P04_DISCLAIMER),
             )
 
+            Spacer(Modifier.height(10.dp))
+
+            // ── 重复提示按钮（FR-05 P0）──────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(BorderStroke(1.dp, HrTrack), RoundedCornerShape(20.dp))
+                    .clickable(role = Role.Button) { vm.repeatVoice() }
+                    .testTag(UiTag.P04_REPEAT_VOICE_BUTTON),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "重复提示",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = HrInkSecondary,
+                )
+            }
+
         }
 
         // ── 按钮行 h50 r25（固定在底部，任何时候都可见）──────────────────
@@ -270,6 +307,16 @@ fun TrainingScreen(
         }
     }
 
+    // FR-14 全屏演示水印覆盖层：画在内容之上，不加 clickable/pointerInput，触摸穿透。
+    if (meta.demoMode) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .testTag(UiTag.DEMO_WATERMARK)
+                .drawBehind { drawDemoWatermark(size, textMeasurer) },
+        )
+    }
+
     // ── 弹窗（M03 恢复 / M01 结束确认 / 保存失败）──────────────────────
     meta.pendingRecovery?.let { snap ->
         // M03：居中弹窗。主操作=继续，次操作=丢弃（红字）
@@ -309,6 +356,7 @@ fun TrainingScreen(
             onDismiss = { vm.abandonOnSaveFailure() },
         )
     }
+    } // Box(Modifier.fillMaxSize())
 }
 
 // ── 视频区（h300，#1B2A38）─────────────────────────────────────────────
@@ -547,7 +595,7 @@ private fun WaveCard(label: String, value: String, valueColor: Color, tag: Strin
 private fun StatusLine(metric: MetricUiState, demo: Boolean) {
     val (text, color) = when (metric) {
         is MetricUiState.NotEnabled -> "未开启感知" to HrInkTertiary
-        is MetricUiState.Establishing -> "信号建立中 ${metric.elapsedSec}s / 约 30s" to HrBrand
+        is MetricUiState.Establishing -> "信号建立中 ${metric.elapsedSec}s / 约 ${metric.totalSec}s" to HrBrand
         is MetricUiState.NoData -> "信号暂失" to HrWarn
         is MetricUiState.Invalid -> "信号弱，" to HrWarn
         is MetricUiState.Degraded -> "信号一般" to HrWarn
@@ -618,6 +666,48 @@ private fun PauseGlyph(color: Color, modifier: Modifier, paused: Boolean) {
 private fun secText(ms: Long): String {
     val s = ((ms + 999) / 1000).toInt().coerceAtLeast(0)
     return "%02d:%02d".format(s / 60, s % 60)
+}
+
+/**
+ * 全屏演示水印（FR-14 / AC-19）。
+ *
+ * 半透明（约 8% 不透明度）、-30° 斜向重复平铺「模拟数据 · 仅用于演示」。
+ * 用 [drawBehind] 绘制，不拦截任何点击。
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDemoWatermark(
+    canvasSize: Size,
+    textMeasurer: androidx.compose.ui.text.TextMeasurer,
+) {
+    val text = "模拟数据 · 仅用于演示"
+    val rotationDeg = -30f
+    // 平铺间距
+    val stepX = 280f
+    val stepY = 160f
+    // 旋转后需覆盖更大的范围，取对角线长度作为半边
+    val halfDiag = kotlin.math.sqrt(
+        canvasSize.width * canvasSize.width + canvasSize.height * canvasSize.height,
+    ) / 2f
+
+    val textResult = textMeasurer.measure(
+        text = AnnotatedString(text),
+        style = TextStyle(
+            fontSize = 14.sp,
+            color = Color(0x140F1A24), // ~8% 不透明度
+        ),
+        overflow = TextOverflow.Visible,
+    )
+
+    rotate(rotationDeg, pivot = Offset(canvasSize.width / 2f, canvasSize.height / 2f)) {
+        var y = -halfDiag
+        while (y <= halfDiag) {
+            var x = -halfDiag
+            while (x <= halfDiag) {
+                drawText(textResult, topLeft = Offset(x, y))
+                x += stepX
+            }
+            y += stepY
+        }
+    }
 }
 
 /** 指标取值：只有 Valid/Degraded 才有数，其余给「--」（FR-08 四态）。 */

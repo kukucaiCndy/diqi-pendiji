@@ -56,12 +56,14 @@ object QualityGate {
      * @param faceLostMs 人脸已连续丢失的毫秒数（0 表示在框内）
      * @param lightOk 光照是否充足
      * @param sqiThreshold SQI 门限
+     * @param hrReadySec 心率可用的最短时长（默认 30，演示模式可传更短值）
      */
     fun evaluate(
         snapshot: SensorSnapshot,
         faceLostMs: Long = snapshot.faceLostMs,
         lightOk: Boolean = snapshot.lightOk,
         sqiThreshold: Float = DEFAULT_SQI_THRESHOLD,
+        hrReadySec: Int = HR_READY_SEC,
     ): Verdict {
         // 1) 未启用感知 —— 整块不显示
         if (snapshot.missingReason == MissingReason.NOT_ENABLED) {
@@ -72,8 +74,8 @@ object QualityGate {
             )
         }
 
-        // 2) 前 30 秒：信号建立中，一个数字都不许出（AC-15）
-        if (snapshot.elapsedSec < HR_READY_SEC) {
+        // 2) 前 hrReadySec 秒：信号建立中，一个数字都不许出（AC-15）
+        if (snapshot.elapsedSec < hrReadySec) {
             return Verdict(
                 state = QualityState.NO_DATA,
                 showNumbers = false,

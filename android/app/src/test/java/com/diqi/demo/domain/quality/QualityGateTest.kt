@@ -61,6 +61,21 @@ class QualityGateTest {
     }
 
     @Test
+    fun 演示模式缩短建立期_hrReadySec_3_时3秒后即出HR() {
+        // 演示模式传 hrReadySec=3（DemoSensor.HR_READY_SEC），3s 后即可出数
+        listOf(0, 1, 2).forEach { sec ->
+            val v = QualityGate.evaluate(snap(elapsedSec = sec), hrReadySec = 3)
+            assertFalse("第 $sec 秒不应显示数字（演示模式 3s 建立期）", v.showNumbers)
+            assertEquals(QualityState.NO_DATA, v.state)
+        }
+        // 第 3 秒开始允许
+        assertTrue(
+            "演示模式 3s 建立期后应允许显示数字",
+            QualityGate.evaluate(snap(elapsedSec = 3), hrReadySec = 3).showNumbers,
+        )
+    }
+
+    @Test
     fun 人脸丢失不足三秒只做半透明_不切换状态() {
         val v = QualityGate.evaluate(snap(), faceLostMs = 1_200L)
         assertEquals("短暂丢失不应切状态（AC-16 反面）", QualityState.VALID, v.state)
