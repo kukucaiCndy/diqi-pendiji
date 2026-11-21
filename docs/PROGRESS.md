@@ -924,3 +924,88 @@ elapsedActiveMs / pausedMs / pauseCount / start / release / currentFrame` 的最
 2. **FacePhys 仍为契约桩**：`facephys-api` 的 `StubRppgEngine` 不产生生理数值，
    演示数据来自 `DemoSensor` 合成，非真实 rPPG 取数。
 3. **掉帧优化未动**：本轮聚焦设置死项与演示模式，训练页掉帧问题（见 S9 补充 8）未做进一步优化。
+
+---
+
+## 2026-11-21 · FacePhys SDK v1.5.0 真实接入
+
+### 起因
+
+上一节第 2 条遗留写着「FacePhys 仍为契约桩」。本轮把这条欠账清掉：
+拿到 SDK 签发包并完成真实接入，**真机出了真实 HR/RR 数字与趋势曲线**，不再有假数。
+
+### SDK 签发与下载
+
+- 控制台签发 `rppg-sdk-v1.5.0-delivery.zip`，66.9 MB。
+- 下载走的是**浏览器里 CDP 抓签名链 + `aria2c` 续传**：签发下载链接带时效签名，
+  直接 `curl` 会被拒；按 CDP 捕获到的真实 `Authorization`/`Cookie`/签名参数复现请求，
+  再用 `aria2` 分段续传拉完，中途断链不重下。
+- 落地后校验 sha256 = `4050ba9e…`（完整值见 `PROGRESS` 本轮校验输出），与签发页一致。
+
+### 接入架构（保留 `:facephys-api` 为契约 + 适配层）
+
+| 层 | 做法 | 为什么 |
+| --- | --- | --- |
+| 契约层 | `:facephys-api` 的 `RppgEngine` 接口一行不改 | app 侧只依赖契约，`StubRppgEngine` 仍可作为无 SDK 环境的替身 |
+| 适配层 | 新增 `RealRppgEngine`，包装 `com.stepmini.rppg.RppgEngineImpl` | SDK 类型（`RppgConfig`/`MetricsResult`/`InitResult`/`HrvResult`）全部止步于适配层，不外泄到 app |
+| 打包 | AAR 经 `flatDir` 引入 + 4 个传递依赖 | 签发包未上私服，本地 `.aar` 走 `flatDir` 最省事；传递依赖需在 `app`/`facephys-api` 里显式声明 |
+| 模型 | 两个加密模型 `step_mini.tflite.enc` / `state_mini.bin.enc` 放 `app/src/main/assets/` | 运行期由 SDK 自行解密；两者合计使 APK 增大约 154 KB |
+| 授权 | AppKey 从 `local.properties` 读入 → `BuildConfig` 字段 | 见下方「偏离」 |
+
+**只接 HR / RR / SQI**：核实过 SDK 的 API 面（65 个类），**没有 PPG 波形输出接口**，
+只有标量指标。所以训练页的「趋势曲线」不是原始波形回放，而是**真实数值的滚动趋势线**
+（HR/RR 采样点连线），呈现层如实标为趋势而非波形。
+
+**AppKey 的已知偏离**：控制台文档建议「服务端下发」，beta 阶段先走
+`local.properties → BuildConfig.RPPG_APP_KEY`（`local.properties` 已 gitignore，不入库）。
+正式发版前切服务端下发，客户端不留 AppKey。
+
+### 顺带修掉的真机问题
+
+1. **训练侧 `RppgSensor` 补齐**（S6 第二部分欠账）：训练页原本只有校准页接真引擎，
+   训练中仍是演示源。新增 `RppgSensor`（真实源），`TrainingDeps` 按源分流。
+2. **相机精确解绑修预览定格**：原来用 `unbindAll()`，退出校准时把**别的用例**的相机也解了，
+   转场回来预览定格在旧帧（串台）。改为只解绑自己绑定的 `UseCaseGroup`。
+   同时补**首帧 AE/AWB 锁定** —— 用 `CONTROL_AE_LOCK` + `CONTROL_AWB_LOCK`
+   （AWB 用 `AWB_LOCK`，**不是**把 `CONTROL_AWB_MODE` 设成 `OFF`，后者在部分机型上直接出灰帧）。
+3. **校准页对齐设计稿 P03**：进度环、三态文案（等待/对准/信号弱）、框色、原因行。
+4. **首页感知行动态 + 「再练一次」分流**：感知行按相机授权状态显示，再练一次按授权走相机/演示路径。
+
+### SQI 双门限（beta 标定裁决）
+
+单测实测与真机都表明：**室内 SQI 常落在 0.15–0.49**，沿用单门限 0.50 会导致
+「信号弱」常驻、永远不达标、演示时看不到数字，无法确认链路真的在出值。
+
+用户裁决（2026-11-21）改为**双门限**：
+
+| 区间 | 行为 |
+| --- | --- |
+| `< floor 0.30` | 不出数字 |
+| `[0.30, 0.50)` | **出数字** + 常驻「信号一般，估算值仅供参考」（`DEGRADED`） |
+| `≥ 0.50` | 原有 VALID / 低光 `DEGRADED` 逻辑 |
+
+- 达标门限仍是 `DEFAULT_SQI_THRESHOLD = 0.50`，既有断言一行未改。
+- 默认 `floor == threshold`，即**不显式设置就没有中间带** —— 非 beta 路径行为不变。
+- 正式发版必须由临床签字后把 floor 改回 0.50。
+
+### 验证
+
+- **单测 235 项 / 0 失败**（`app` 184 + `facephys-api` 51，本轮新增 91 项：
+  `RealRppgEngineMappersTest`、`RppgSensorTest`、`QualityGateTest` 双门限 6 项等）。
+- **lint 0 error**；**禁词扫描**（`exit` / `System.exit`）0 命中。
+- **真机**（FY23175108A5，零崩溃）：
+  - 激活 `HTTP 200`，License 剩余 20 天；断网注入 `-16` 后**自动重连**成功；
+  - **HR 68–90 bpm、RR 9–12 rpm** 真实数值与滚动趋势曲线（`sdk7-numbers.png` / `sdk7-curve.png`）；
+  - 演示曲线（`sdk7-demo-curve.png`）；
+  - **AC-16 遮脸语义**：`faceLost ≥ 3s` → 指标区切「信号暂失」`NoData`（`sdk5-02-noface.png`）。
+  - 证据：`docs/evidence/sdk*-*.png`、`docs/evidence/sdk6-metric-trace.log`、`sdk7-metric-trace.log`。
+
+### 遗留（如实标注）
+
+1. **AC-17 弱光图 + AC-16 恢复图**待用户回到画面时补拍（需真人遮脸/打光）。
+2. **既有债**：`androidTest/MetricAreaStateTest.kt` 引用了已删除的 `MetricArea`，
+   仪器化测试编译不过 —— 与本轮无关，未动。
+3. **debug 造数广播不投递**：`DEBUG_SEED` 广播在本机 `am broadcast` 无响应，
+   接收器注册正确（manifest + 代码都在），待查是否被 `exported`/权限过滤。
+4. **临床签字后 SQI floor 回 0.50**（见上）。
+5. **AppKey 切服务端下发**（正式发版前）。
