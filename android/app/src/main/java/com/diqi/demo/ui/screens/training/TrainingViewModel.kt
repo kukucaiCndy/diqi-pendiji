@@ -13,8 +13,14 @@ import com.diqi.demo.data.db.MissingReason
 import com.diqi.demo.domain.quality.QualityGate
 import com.diqi.demo.domain.training.TrainingStatus
 import com.diqi.demo.sensor.DemoSensor
+import com.diqi.demo.sensor.NullSensor
+import com.diqi.demo.sensor.RppgSensor
 import com.diqi.demo.sensor.SensorAdapter
-import com.diqi.demo.training.TrainingSessionCoordinator
+import com.diqi.demo.sensor.SensorKind
+import com.diqi.demo.sensor.camera.FaceAnalyzer
+import com.diqi.demo.sensor.camera.FaceFrame
+import com.diqi.demo.sensor.chooseSensorKind
+import com.diqi.demo.training.RppgSensorAssembly
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +55,13 @@ data class TrainingUiState(
     val saveFailed: Boolean = false,
     /** 演示模式（FR-14）：为 true 时指标区必须渲染全屏水印 */
     val demoMode: Boolean = false,
+    /** 真实传感器是否就绪（cameraEnabled + appKey + bridge 初始化成功）。
+     * 为 true 时 Screen 渲染真实相机预览；为 false 时维持占位渲染。 */
+    val isRealSensor: Boolean = false,
+    /** 相机错误文案（照 CalibrateViewModel.cameraError）；null 表示无错误 */
+    val cameraError: String? = null,
+    /** 当前是否检测到人脸（用于触发 AE/AWB 锁定）。低频：仅在出现/消失时变化。 */
+    val faceFound: Boolean = false,
 )
 
 /**
@@ -90,13 +103,69 @@ class TrainingViewModel(
     private val _metric = MutableStateFlow<MetricUiState>(MetricUiState.NotEnabled)
     val metric: StateFlow<MetricUiState> = _metric.asStateFlow()
 
+    /**
+     * 心率 / 呼吸率的 **1Hz 历史**（最多 [HISTORY_MAX] 点，环形截断最旧的）。
+     *
+     * ## 为什么是"每秒采一次"而不是"从 SDK 拿波形"
+     *
+     * SDK 的 65 个公开方法/字段里**没有** PPG 波形接口（已核实），能拿到的
+     * 只有每秒刷新一次的 [MetricUiState]。所以训练页的真实趋势线 =
+     * **每秒采样的真实读数序列**，不是伪造的平滑曲线：
+     * SDK 指标约 10s 才刷新一次，于是曲线呈台阶／平台 —— 那是真实读数窗口，
+     * 保留它，不插值、不做平滑（插值就是造假）。
+     *
+     * 只在 [MetricUiState.Valid] / [MetricUiState.Degraded] 且对应值非空时追加；
+     * NotEnabled / Establishing / NoData / Invalid 一律**不追加**（宁缺毋滥）。
+     * 暂停后 frames 停发，历史自然冻结（设计稿 P04-b）。
+     */
+    private val _hrHistory = MutableStateFlow<List<Float>>(emptyList())
+    val hrHistory: StateFlow<List<Float>> = _hrHistory.asStateFlow()
+
+    private val _rrHistory = MutableStateFlow<List<Float>>(emptyList())
+    val rrHistory: StateFlow<List<Float>> = _rrHistory.asStateFlow()
+
     private var started = false
     private var savedId: String? = null
     /** 演示模式（FR-14）。决定写库时的 sensorMode，绝不能被当成真实记录 */
     private var demoMode: Boolean = false
 
-    /** 当前感知数据源。演示模式 → DemoSensor；否则 NullSensor（S6 第二部分接真实源）*/
-    private var sensor: SensorAdapter = container.sensorFor(demoMode = false)
+    /** 真实 rPPG 组装（sensor + bridge）。非真实路径时为 null。 */
+    private var rppgAssembly: RppgSensorAssembly? = null
+
+    /** 真实传感器是否就绪（cameraEnabled + appKey + bridge 初始化成功）。 */
+    @Volatile
+    private var realSensorReady: Boolean = false
+
+    /**
+     * 供页面持有的帧分析器（lazy：仅在真实路径需要时初始化 ML Kit）。
+     *
+     * 真实路径：onFeed → bridge.feed，onFrame → 帧状态跟踪（照 CalibrateViewModel:95/158 范本）。
+     * 非真实路径：不会访问此属性（Screen 仅在 isRealSensor 时用它建 CameraController）。
+     *
+     * 刻意 lazy：FaceAnalyzer 构造时初始化 ML Kit FaceDetector，
+     * 在纯 JVM 测试环境会抛 MlKitContext 未初始化。lazy 让测试不触碰它。
+     */
+    private val analyzerLazy = lazy {
+        FaceAnalyzer(
+            onFeed = { roi, dtSec ->
+                val bridge = rppgAssembly?.bridge
+                if (bridge != null) bridge.feed(roi, dtSec)
+                else com.facephys.rppg.FrameResult.ERR_NOT_INITIALIZED
+            },
+            onFrame = { frame -> onFaceFrame(frame) },
+        )
+    }
+    val analyzer: FaceAnalyzer get() = analyzerLazy.value
+
+    /**
+     * 当前感知数据源。
+     *
+     * 三态选择（纯函数 [chooseSensor]，集中可测）：
+     *  · demoMode → DemoSensor
+     *  · cameraEnabled + appKey 非空 → RppgSensor（真实源）
+     *  · 否则 → NullSensor（无 key/无相机绝不出假数，FR-08/AC-14）
+     */
+    private var sensor: SensorAdapter = NullSensor()
 
     private var sessionStartedAtMs: Long = 0L
 
@@ -111,7 +180,21 @@ class TrainingViewModel(
             _state.value = _state.value.copy(demoMode = settings.isDemoMode)
             // 语音速度真正生效（FR-05）：进入训练页时用当前设置值初始化播放器速度
             container.voice.setSpeed(settings.audioSpeed)
-            sensor = container.sensorFor(demoMode, cameraEnabled)
+            // 三态选择（纯函数 chooseSensorKind，集中可测）：
+            // 真实路径组装 bridge + RppgSensor；非真实路径回退 NullSensor/DemoSensor。
+            rppgAssembly = if (!demoMode && cameraEnabled) container.createRppgSensor() else null
+            // appKey 判定：rppgAssembly != null 说明 container 认为可以创建真实源
+            val appKey = if (rppgAssembly != null) "real-key-present" else ""
+            val kind = chooseSensorKind(demoMode, cameraEnabled, appKey)
+            sensor = when (kind) {
+                SensorKind.DEMO -> DemoSensor()
+                SensorKind.REAL -> rppgAssembly?.sensor ?: NullSensor()
+                SensorKind.NULL -> NullSensor()
+            }
+            realSensorReady = sensor is RppgSensor
+            if (realSensorReady) {
+                _state.value = _state.value.copy(isRealSensor = true)
+            }
             // 先看内存里是否已有**正在进行**的会话（锁屏/重建后重新进入）
             val running = coordinator.currentFrame()
             val hasRunning = running.status == TrainingStatus.RUNNING ||
@@ -187,12 +270,52 @@ class TrainingViewModel(
         viewModelScope.launch {
             coordinator.frames.collect { frame ->
                 _frames.value = frame
-                _metric.value = computeMetric()
+                val metric = computeMetric()
+                _metric.value = metric
+                recordHistory(metric)
                 if (frame.status == TrainingStatus.COMPLETE && savedId == null) {
                     finishSession(frame)
                 }
             }
         }
+    }
+
+    /**
+     * 把这一秒的读数追加进历史（1Hz 采样，见 [hrHistory] 的说明）。
+     *
+     * 环形上限 [HISTORY_MAX]：超出丢最旧的，内存与绘制量恒定。
+     */
+    private fun recordHistory(metric: MetricUiState) {
+        val hr = when (metric) {
+            is MetricUiState.Valid -> metric.heartRateBpm
+            is MetricUiState.Degraded -> metric.heartRateBpm
+            else -> null
+        }
+        val rr = when (metric) {
+            is MetricUiState.Valid -> metric.breathingRatePerMin
+            is MetricUiState.Degraded -> metric.breathingRatePerMin
+            else -> null
+        }
+        if (hr != null) _hrHistory.value = appendBounded(_hrHistory.value, hr)
+        if (rr != null) _rrHistory.value = appendBounded(_rrHistory.value, rr)
+    }
+
+    /**
+     * FaceAnalyzer.onFrame 回调：更新 RppgSensor 的帧状态。
+     *
+     * 照 CalibrateViewModel:158 范本：faceLostMs / lightOk 由 FaceAnalyzer 逐帧真实累计，
+     * 这里只透传给 RppgSensor（非真实路径时 rppgAssembly 为 null，忽略）。
+     * AC-16 遮脸 3s→NO_DATA 自然成立：faceLostMs 经 RppgSensor 传到 SensorSnapshot，
+     * QualityGate 据此判 FACE_LOST_NO_DATA_MS。
+     */
+    private fun onFaceFrame(frame: FaceFrame) {
+        val rppg = rppgAssembly?.sensor
+        val lightOk = frame.brightness >= MIN_BRIGHTNESS
+        if (rppg != null) {
+            rppg.updateFrameState(faceLostMs = frame.faceLostMs, lightOk = lightOk)
+        }
+        // 把 faceFound 推到 meta（低频流），供 Screen 触发首次 AE/AWB 锁定
+        _state.value = _state.value.copy(faceFound = frame.faceFound)
     }
 
     /**
@@ -307,6 +430,8 @@ class TrainingViewModel(
         // 页面离开时停投喂（需求 §5.3：页面销毁 release()）。
         // 会话本身是 app 级的，不在这里释放。
         runCatching { sensor.release() }
+        // analyzer 是 lazy：仅在已初始化时才 release（避免强制初始化 ML Kit）
+        if (analyzerLazy.isInitialized()) runCatching { analyzer.release() }
     }
 
     override fun onCleared() {
@@ -338,7 +463,12 @@ class TrainingViewModel(
             // FR-14：演示模式产生的记录必须标 simulated，
             // 否则 `countsTowardProgress = !mode.isSimulated` 会把它
             // 计入打卡与周报，等于演示数据污染真实统计（AC-19）。
-            mode = if (demoMode) SensorMode.SIMULATED else SensorMode.OFF,
+            // 真实路径标 OFFLINE_SDK（countsTowardProgress=true），否则 OFF。
+            mode = when {
+                demoMode -> SensorMode.SIMULATED
+                realSensorReady -> SensorMode.OFFLINE_SDK
+                else -> SensorMode.OFF
+            },
             // 未接真实感知，覆盖率无从谈起 —— 如实为 null，
             // 由 SessionRepository 的 60% 门限保证不会带出假指标。
             signalCoverage = null,
@@ -358,5 +488,21 @@ class TrainingViewModel(
                     _state.value = _state.value.copy(saveFailed = true)
                 }
         }
+    }
+
+    companion object {
+        /** 亮度门限（与 CalibrateViewModel.MIN_BRIGHTNESS 对齐 = 60）*/
+        private const val MIN_BRIGHTNESS = 60
+
+        /** 波形历史上限：60 点 × 1Hz ≈ 1 分钟，够画满卡片宽度。 */
+        const val HISTORY_MAX = 60
+
+        /** 环形追加：超出上限丢最旧的。纯函数，便于单测。 */
+        internal fun appendBounded(history: List<Float>, value: Float): List<Float> =
+            if (history.size >= HISTORY_MAX) {
+                history.drop(history.size - HISTORY_MAX + 1) + value
+            } else {
+                history + value
+            }
     }
 }

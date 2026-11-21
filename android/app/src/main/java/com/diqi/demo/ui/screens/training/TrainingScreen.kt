@@ -41,6 +41,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -113,6 +115,12 @@ fun TrainingScreen(
     val meta by vm.state.collectAsState()
     val frame by vm.frames.collectAsState()
     val metric by vm.metric.collectAsState()
+    // 1Hz 真实读数历史（SDK 无波形接口）：喂给 WaveCard 画趋势线
+    val hrHistory by vm.hrHistory.collectAsState()
+    val rrHistory by vm.rrHistory.collectAsState()
+    // 曲线是否可画：窗口建够且当前有可信读数（Valid/Degraded）。
+    // 单看 history.size 不够 —— 遮脸后历史还在，但此刻的读数不可信。
+    val hasWindow = metric is MetricUiState.Valid || metric is MetricUiState.Degraded
     val textMeasurer = rememberTextMeasurer()
 
     // 真实相机预览（照 CalibrateScreen:89-140 范本）：
@@ -256,6 +264,8 @@ fun TrainingScreen(
                 value = metric.heartRateOrNull(),
                 valueColor = HrHeartRate,
                 tag = UiTag.P04_METRIC_HR,
+                history = hrHistory,
+                hasEnoughWindow = hasWindow,
             )
             Spacer(Modifier.height(10.dp))
             WaveCard(
@@ -263,6 +273,8 @@ fun TrainingScreen(
                 value = metric.breathingRateOrNull(),
                 valueColor = HrBreathing,
                 tag = UiTag.P04_METRIC_RR,
+                history = rrHistory,
+                hasEnoughWindow = hasWindow,
             )
 
             Spacer(Modifier.height(10.dp))
@@ -620,10 +632,23 @@ private fun TimelineStep(name: String, duration: String, state: StepState) {
     }
 }
 
-// ── 波形卡（有结构无假曲线）───────────────────────────────────────────
+// ── 波形卡（真实趋势线 / 骨架）────────────────────────────────────────
+//
+// 曲线数据来自 ViewModel 的 1Hz 采样历史（SDK 没有 PPG 波形接口，见
+// TrainingViewModel.hrHistory 注释）。历史不足 2 点或窗口还没建够时画骨架
+// （设计稿 P04-c：虚线底 + 「信号建立中」），够了一律画**真实读数**连成的线，
+// 台阶平台是 SDK 每 ~10s 才刷新一次的固有形态，不插值。
 
 @Composable
-private fun WaveCard(label: String, value: String, valueColor: Color, tag: String) {
+private fun WaveCard(
+    label: String,
+    value: String,
+    valueColor: Color,
+    tag: String,
+    history: List<Float>,
+    hasEnoughWindow: Boolean,
+) {
+    val showCurve = history.size >= 2 && hasEnoughWindow
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -662,6 +687,55 @@ private fun WaveCard(label: String, value: String, valueColor: Color, tag: Strin
                 .align(Alignment.TopEnd)
                 .padding(end = 12.dp, top = 6.dp),
         )
+
+        // 曲线区：水平 inset 12dp、高 64dp（设计稿 path 404×64）
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 12.dp, end = 12.dp, bottom = 4.dp)
+                .fillMaxWidth()
+                .height(64.dp),
+        ) {
+            if (showCurve) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val points = normalizeCurvePoints(history, size.width, size.height)
+                    if (points.size >= 2) {
+                        val path = Path()
+                        path.moveTo(points[0].x, points[0].y)
+                        for (i in 1 until points.size) {
+                            path.lineTo(points[i].x, points[i].y)
+                        }
+                        drawPath(
+                            path = path,
+                            color = valueColor,
+                            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+                        )
+                    }
+                }
+            } else {
+                // 骨架：虚线底 404×1 #E2E8F0 + 「信号建立中」11sp #94A3B8（P04-c）
+                Canvas(Modifier.fillMaxSize()) {
+                    val y = size.height / 2f
+                    drawLine(
+                        color = HrLine,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(4.dp.toPx(), 4.dp.toPx()),
+                        ),
+                    )
+                }
+                Text(
+                    text = "信号建立中",
+                    fontSize = 11.sp,
+                    color = HrInkTertiary,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 2.dp),
+                )
+            }
+        }
     }
 }
 
