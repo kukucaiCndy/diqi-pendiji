@@ -44,8 +44,7 @@ import com.diqi.demo.ui.components.HrSecondaryButton
 import com.diqi.demo.ui.rememberContainer
 import com.diqi.demo.ui.rememberContainerViewModel
 import com.diqi.demo.ui.screens.dev.DesignSystemScreen
-import com.diqi.demo.ui.screens.home.HomeScreen
-import com.diqi.demo.ui.screens.training.TrainingPrepScreen
+import com.diqi.demo.ui.screens.home.TrainingHomeScreen
 import com.diqi.demo.ui.screens.training.TrainingScreen
 import com.diqi.demo.ui.screens.onboarding.ScreeningScreen
 import com.diqi.demo.ui.screens.onboarding.WelcomeScreen
@@ -84,18 +83,19 @@ fun HerRhythmNavHost(
     var startRoute by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         val settings = container.settingsStore.current()
-        startRoute = if (settings.safetyAcknowledgedAt != null) Routes.HOME else Routes.ONBOARDING_WELCOME
+        startRoute = if (settings.safetyAcknowledgedAt != null) Routes.TRAINING_HOME else Routes.ONBOARDING_WELCOME
     }
 
     val command by navCommands.collectAsState()
     LaunchedEffect(command) {
         when (command) {
             NavCommand.OPEN_TRAINING -> {
-                navController.navigate(Routes.TRAINING_LIVE) { launchSingleTop = true }
+                // 通知点进来：默认走「不用摄像头」的路径，不让用户卡在权限门上
+                navController.navigate(Routes.trainingLive(camera = false)) { launchSingleTop = true }
                 onConsumeCommand()
             }
             NavCommand.OPEN_HOME -> {
-                navController.navigate(Routes.HOME) { launchSingleTop = true; popUpTo(Routes.HOME) }
+                navController.navigate(Routes.TRAINING_HOME) { launchSingleTop = true; popUpTo(Routes.TRAINING_HOME) }
                 onConsumeCommand()
             }
             null -> Unit
@@ -125,7 +125,7 @@ fun HerRhythmNavHost(
                     ScreeningScreen(
                         vm = onboardingVm,
                         onFinished = {
-                            navController.navigate(Routes.HOME) {
+                            navController.navigate(Routes.TRAINING_HOME) {
                                 popUpTo(Routes.ONBOARDING_WELCOME) { inclusive = true }
                             }
                         },
@@ -134,17 +134,13 @@ fun HerRhythmNavHost(
                 }
 
                 // ── 主 Tab ───────────────────────────────────────────────
-                composable(Routes.HOME) {
-                    HomeScreen(
-                        onStartTraining = { navController.navigate(Routes.TRAINING_PREP) },
-                        onOpenCalibrate = { navController.navigate(Routes.CALIBRATE) },
-                    )
-                }
-                composable(Routes.TRAINING_PREP) {
-                    TrainingPrepScreen(
-                        onStartTraining = { navController.navigate(Routes.TRAINING_LIVE) },
-                        onOpenCalibrate = { navController.navigate(Routes.CALIBRATE) },
-                        onBack = { navController.popBackStack() },
+                // 合并后的「训练」Tab：两条路径都在这一页上，不做二级跳转
+                composable(Routes.TRAINING_HOME) {
+                    TrainingHomeScreen(
+                        onStartWithoutCamera = {
+                            navController.navigate(Routes.trainingLive(camera = false))
+                        },
+                        onStartWithCamera = { navController.navigate(Routes.CALIBRATE) },
                     )
                 }
                 composable(Routes.RECORDS) {
@@ -170,8 +166,17 @@ fun HerRhythmNavHost(
                 }
 
                 // ── 全屏路由（底部栏不显示）───────────────────────────────
-                composable(Routes.TRAINING_LIVE) {
+                composable(
+                    route = Routes.TRAINING_LIVE,
+                    arguments = listOf(
+                        androidx.navigation.navArgument("camera") {
+                            type = androidx.navigation.NavType.BoolType
+                            defaultValue = false
+                        },
+                    ),
+                ) { liveEntry ->
                     TrainingScreen(
+                        cameraEnabled = liveEntry.arguments?.getBoolean("camera") ?: false,
                         onFinished = { sessionId ->
                             val route = if (sessionId != null) {
                                 "${Routes.COMPLETE}?sessionId=$sessionId"
@@ -188,8 +193,20 @@ fun HerRhythmNavHost(
                 }
                 composable(Routes.CALIBRATE) {
                     com.diqi.demo.ui.screens.calibrate.CalibrateScreen(
-                        onStartWithSensor = { navController.popBackStack() },
-                        onSkip = { navController.popBackStack() },
+                        // 校准成功 → 带摄像头参数进训练（camera=true）
+                        onStartWithSensor = {
+                            navController.navigate(Routes.trainingLive(camera = true)) {
+                                popUpTo(Routes.CALIBRATE) { inclusive = true }
+                            }
+                        },
+                        // 「跳过，直接训练」→ 不带摄像头进训练（camera=false）。
+                        // 首版两处都是 popBackStack()，于是点「开始训练」会退回
+                        // 训练 Tab 而不是进训练页 —— 合并 IA 之后这条路径必须显式导航。
+                        onSkip = {
+                            navController.navigate(Routes.trainingLive(camera = false)) {
+                                popUpTo(Routes.CALIBRATE) { inclusive = true }
+                            }
+                        },
                     )
                 }
                 composable(
@@ -205,8 +222,8 @@ fun HerRhythmNavHost(
                     com.diqi.demo.ui.screens.complete.CompleteScreen(
                         sessionId = entry.arguments?.getString("sessionId"),
                         onDone = {
-                            navController.navigate(Routes.HOME) {
-                                popUpTo(Routes.HOME) { inclusive = true }
+                            navController.navigate(Routes.TRAINING_HOME) {
+                                popUpTo(Routes.TRAINING_HOME) { inclusive = true }
                             }
                         },
                     )
@@ -233,7 +250,7 @@ fun HerRhythmNavHost(
                     // 对训练 Tab 等于每次重拿相机，与 D13 的意图相反。
                     if (currentRoute != tab.route) {
                         navController.navigate(tab.route) {
-                            popUpTo(Routes.HOME) { saveState = true }
+                            popUpTo(Routes.TRAINING_HOME) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
                         }
@@ -291,7 +308,6 @@ private fun AppBottomBar(
 
 private val BottomTab.icon: ImageVector
     get() = when (this) {
-        BottomTab.HOME -> Icons.Filled.Home
         BottomTab.TRAINING -> Icons.Filled.PlayArrow
         BottomTab.RECORDS -> Icons.Filled.List
         BottomTab.PROFILE -> Icons.Filled.Person

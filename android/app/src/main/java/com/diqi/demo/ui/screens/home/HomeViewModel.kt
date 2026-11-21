@@ -15,10 +15,19 @@ import java.time.format.DateTimeFormatter
 
 /** 首页感知状态行三态（FR-02）。 */
 enum class SensorStatusRow(val label: String, val actionLabel: String) {
-    // 文案取自设计稿 P02-a「训练前需开启摄像头 / 去开启」与 P02-b「摄像头已就绪」
-    OFF("训练前需开启摄像头", "去开启"),
+    /**
+     * 文案说明。
+     *
+     * 设计稿 P02-a 原文是「训练前需开启摄像头 / 去开启」，但那是"摄像头作为主路径"
+     * 的旧 IA 下的说法。首页与训练合并后，**摄像头的开启/不开启由用户在主按钮上
+     * 直接选择**（见 INTERACTION-DESIGN.md §2），所以这一行不能再写"必须开启"，
+     * 否则与下面「不用摄像头，直接训练」自相矛盾。
+     *
+     * 改为陈述**当前状态**：未开启时不催促，只说明"不影响练习"。
+     */
+    OFF("摄像头未开启 · 不影响练习", ""),
     READY("摄像头已就绪", ""),
-    WEAK("信号弱，可调整", "调整"),
+    WEAK("信号偏弱 · 可点这里调整", "调整"),
 }
 
 data class HomeUiState(

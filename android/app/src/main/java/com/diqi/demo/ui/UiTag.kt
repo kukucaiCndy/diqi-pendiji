@@ -38,7 +38,11 @@ object UiTag {
     const val P02_GREETING = "p02.greeting"
     const val P02_TODAY_CARD = "p02.today_card"
     const val P02_TODAY_THEME = "p02.today_theme"
+    /** 今日训练卡的主按钮（开启摄像头训练） */
     const val P02_START_BUTTON = "p02.start_button"
+
+    /** 今日训练卡的次按钮（不用摄像头，直接训练） */
+    const val P02_SKIP_CAMERA_BUTTON = "p02.skip_camera_button"
     const val P02_DONE_CARD = "p02.done_card"
     const val P02_AGAIN_BUTTON = "p02.again_button"
     const val P02_WEEK_CHECKIN = "p02.week_checkin"

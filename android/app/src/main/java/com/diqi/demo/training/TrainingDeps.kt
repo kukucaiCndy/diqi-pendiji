@@ -35,7 +35,14 @@ interface TrainingDeps {
 
     suspend fun saveSession(draft: SessionDraft)
 
-    fun sensorFor(demoMode: Boolean): SensorAdapter
+    /**
+     * 选择感知源。
+     *
+     * [cameraEnabled] 是用户在训练 Tab 上做的选择：false 表示明确选择"不用摄像头训练"。
+     * 真实实现里它应决定是否启用 FacePhys；当前 SDK 未接入，两者都返回空源，
+     * **不会因为开了摄像头就伪造指标**。
+     */
+    fun sensorFor(demoMode: Boolean, cameraEnabled: Boolean = false): SensorAdapter
 
     /** 取得（或新建）当前训练会话 */
     fun obtainSession(params: TrainingParams): TrainingSession

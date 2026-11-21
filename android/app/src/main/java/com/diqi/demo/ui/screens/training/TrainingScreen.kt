@@ -80,8 +80,16 @@ fun TrainingScreen(
     onFinished: (String?) -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * 本次训练是否启用摄像头。
+     *
+     * 用户在「训练」Tab 上做的选择，通过路由参数传进来。
+     * 注意：**FacePhys SDK 尚未接入**，所以即使 cameraEnabled=true，
+     * 指标区仍会如实显示「未开启感知」—— 不因为"开了摄像头"就假装有数据。
+     */
+    cameraEnabled: Boolean = false,
 ) {
-    val vm = rememberContainerViewModel { TrainingViewModel(it) }
+    val vm = rememberContainerViewModel { TrainingViewModel(it, cameraEnabled = cameraEnabled) }
     val meta by vm.state.collectAsState()
     val frame by vm.frames.collectAsState()
     val metric by vm.metric.collectAsState()

@@ -65,6 +65,7 @@ data class TrainingUiState(
  */
 class TrainingViewModel(
     private val container: TrainingDeps,
+    private val cameraEnabled: Boolean = false,
     private val params: TrainingParams = TrainingParams.DEFAULT,
 ) : ViewModel() {
 
@@ -107,7 +108,7 @@ class TrainingViewModel(
             val clinical = settings.screening.hasRiskAnswers
             demoMode = settings.isDemoMode
             _state.value = _state.value.copy(demoMode = settings.isDemoMode)
-            sensor = container.sensorFor(demoMode)
+            sensor = container.sensorFor(demoMode, cameraEnabled)
             // 先看内存里是否已有**正在进行**的会话（锁屏/重建后重新进入）
             val running = coordinator.currentFrame()
             val hasRunning = running.status == TrainingStatus.RUNNING ||

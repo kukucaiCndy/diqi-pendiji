@@ -80,7 +80,7 @@ class AppContainer(private val app: Application) : com.diqi.demo.training.Traini
      * 刻意先只有这两个实现：**没有摄像头也绝不出假数值**，
      * 这是 FR-08 与 AC-14 的底线。
      */
-    override fun sensorFor(demoMode: Boolean): SensorAdapter =
+    override fun sensorFor(demoMode: Boolean, cameraEnabled: Boolean): SensorAdapter =
         if (demoMode) DemoSensor() else NullSensor()
 
     /**

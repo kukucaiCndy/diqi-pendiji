@@ -81,9 +81,9 @@ import com.diqi.demo.ui.theme.HrType
  *   不用 Face / Info 这类语义不符的图标顶替）
  */
 @Composable
-fun HomeScreen(
-    onStartTraining: () -> Unit,
-    onOpenCalibrate: () -> Unit,
+fun TrainingHomeScreen(
+    onStartWithoutCamera: () -> Unit,
+    onStartWithCamera: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = rememberContainerViewModel { HomeViewModel(it) }
@@ -126,12 +126,12 @@ fun HomeScreen(
         }
 
         if (state.trainedToday) {
-            DoneCard(state = state, onAgain = onStartTraining)
+            DoneCard(state = state, onAgain = onStartWithoutCamera)
         } else {
-            TodayCard(onStart = onStartTraining)
+            TodayCard(onStart = onStartWithCamera, onSkipCamera = onStartWithoutCamera)
         }
 
-        SensorRow(state = state, onOpenCalibrate = onOpenCalibrate)
+        SensorRow(state = state, onOpenCalibrate = onStartWithCamera)
 
         WeekCard(state = state)
 
@@ -149,7 +149,7 @@ fun HomeScreen(
 // ── P02-a 今日训练卡：深色，主按钮在卡内 ────────────────────────────────
 
 @Composable
-private fun TodayCard(onStart: () -> Unit) {
+private fun TodayCard(onStart: () -> Unit, onSkipCamera: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -184,7 +184,30 @@ private fun TodayCard(onStart: () -> Unit) {
                 modifier = Modifier.size(17.dp),
             )
             Spacer(Modifier.width(8.dp))
-            Text("开始今天的训练", style = HrType.button, color = HrColorOnAccent)
+            Text("开启摄像头训练", style = HrType.button, color = HrColorOnAccent)
+        }
+
+        // 第二条路径：不用摄像头。
+        // 必须和主按钮一样是**页面上可见、可点的一等选项**，
+        // 而不是塞进某个二级页或弹窗 —— FR-03 的「摄像头可选」不是"藏起来"。
+        // 视觉上用描边次级样式，保持"摄像头是加分项、不是门槛"的层级。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .clip(RoundedCornerShape(25.dp))
+                .border(BorderStroke(1.dp, HrColorHairlineDeep), RoundedCornerShape(25.dp))
+                .clickable(role = Role.Button, onClick = onSkipCamera)
+                .testTag(UiTag.P02_SKIP_CAMERA_BUTTON),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "不用摄像头，直接训练",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = HrColorPanelMuted,
+            )
         }
     }
 }
@@ -399,3 +422,4 @@ private val HrColorWarnContainer = Color(0xFFFEF3C7)
 private val HrColorAccent = Color(0xFF5EEAD4)
 private val HrColorOnAccent = Color(0xFF062530)
 private val HrColorPanelMuted = Color(0xFF8FA3B8)
+private val HrColorHairlineDeep = Color(0xFF34495E)

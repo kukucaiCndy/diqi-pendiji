@@ -172,7 +172,7 @@ class TrainingViewModelTest {
             saved += draft
         }
 
-        override fun sensorFor(demoMode: Boolean): SensorAdapter = NullSensor()
+        override fun sensorFor(demoMode: Boolean, cameraEnabled: Boolean): SensorAdapter = NullSensor()
 
         override fun obtainSession(params: TrainingParams): TrainingSession {
             session.pendingSnap = pending
@@ -189,7 +189,7 @@ class TrainingViewModelTest {
     @Test
     fun 连点结束只保存一条记录() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L))
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
 
         vm.confirmStop()
@@ -204,7 +204,7 @@ class TrainingViewModelTest {
     @Test
     fun 保存的会话id与完成页展示的一致() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L))
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
         vm.confirmStop()
         testScheduler.runCurrent()
@@ -216,7 +216,7 @@ class TrainingViewModelTest {
     @Test
     fun 演示模式写入_simulated() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L), settings = AppSettings(isDemoMode = true))
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
         vm.confirmStop()
         testScheduler.runCurrent()
@@ -230,7 +230,7 @@ class TrainingViewModelTest {
     @Test
     fun 非演示模式写入_off() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L), settings = AppSettings(isDemoMode = false))
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
         vm.confirmStop()
         testScheduler.runCurrent()
@@ -251,7 +251,7 @@ class TrainingViewModelTest {
             wasPaused = false,
         )
         val deps = FakeDeps(TestClock(1_000_000L), pending = snap)
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
 
         assertNotNull("AC-13：应弹出继续/丢弃", vm.state.value.pendingRecovery)
@@ -264,7 +264,7 @@ class TrainingViewModelTest {
     @Test
     fun 保存失败时不置_finished_并置_saveFailed() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L), failSave = true)
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
         vm.confirmStop()
         testScheduler.runCurrent()
@@ -280,7 +280,7 @@ class TrainingViewModelTest {
     @Test
     fun 保存失败后点放弃才允许离开() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L), failSave = true)
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
         vm.confirmStop()
         testScheduler.runCurrent()
@@ -299,7 +299,7 @@ class TrainingViewModelTest {
     @Test
     fun 结束后点暂停不会乐观显示已暂停() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L))
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
 
         // 会话已完成：currentFrame 为 COMPLETE
@@ -315,7 +315,7 @@ class TrainingViewModelTest {
     @Test
     fun 暂停后界面状态与会话一致() = runTest(dispatcher) {
         val deps = FakeDeps(TestClock(1_000_000L))
-        val vm = TrainingViewModel(deps, TrainingParams.DEFAULT)
+        val vm = TrainingViewModel(deps, params = TrainingParams.DEFAULT)
         testScheduler.runCurrent()
 
         vm.togglePause()
