@@ -30,6 +30,15 @@ enum class SensorStatusRow(val label: String, val actionLabel: String) {
     WEAK("信号偏弱 · 可点这里调整", "调整"),
 }
 
+/**
+ * 首页感知行状态**只**由真实授权状态决定（见 [SensorStatusRow] 的说明）。
+ *
+ * 抽成纯函数是为了能被 JVM 单测钉住 —— `HomeViewModel` 依赖具体的 `AppContainer`
+ * （Room + DataStore），JVM 测试里无法构造，判定逻辑单独拿出来测才不靠设备。
+ */
+internal fun sensorStatusRowFor(cameraConsentActive: Boolean): SensorStatusRow =
+    if (cameraConsentActive) SensorStatusRow.READY else SensorStatusRow.OFF
+
 data class HomeUiState(
     val loading: Boolean = true,
     val greeting: String = "",
@@ -50,6 +59,14 @@ data class HomeUiState(
      */
     val todaySummaryText: String = "",
     val sensor: SensorStatusRow = SensorStatusRow.OFF,
+    /**
+     * 相机是否处于**当前有效**的授权状态（同意过且其后未撤销，见
+     * `AppSettings.cameraConsentActive`）。
+     *
+     * P02-b 的「再练一次」必须据此分流：授权过的用户点它应该回到
+     * 校准 → 带摄像头训练，而不是被永远钉在无摄像头路径上。
+     */
+    val cameraConsentActive: Boolean = false,
     /** FR-01 分流：需要常驻就医提示 */
     val clinicalNoticeRequired: Boolean = false,
     val todayWeekday: Int = 0,
@@ -122,11 +139,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 } else {
                     ""
                 },
-                // 感知状态只能由真实的 SensorCoordinator 驱动（S6）。
-                // 首版把"演示模式"映射成"信号弱"是**编造状态**，与本文件
-                // 头声明的"绝不造假"自相矛盾，已删除。
-                // 在感知层接入前，如实显示"未开启感知"。
-                sensor = SensorStatusRow.OFF,
+                // 感知状态只能由**真实授权状态**驱动，不得编造：
+                // 授权有效（同意过且未撤销，摄像头可随时开）→ READY「摄像头已就绪」；
+                // 未授权 → OFF「摄像头未开启 · 不影响练习」（摄像头可选，不催促）。
+                sensor = sensorStatusRowFor(settings.cameraConsentActive),
+                // 「再练一次」的分流依据：真实授权状态，不是本地猜测。
+                cameraConsentActive = settings.cameraConsentActive,
                 // 只有真的答过并触发了风险项才显示就医提示。
                 // 未完成筛查（或直接跳过）不该被误报成"你之前回答过需要留意的情况"。
                 clinicalNoticeRequired = settings.screening.hasRiskAnswers,

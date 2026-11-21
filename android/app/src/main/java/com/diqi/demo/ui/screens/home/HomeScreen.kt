@@ -126,7 +126,11 @@ fun TrainingHomeScreen(
         }
 
         if (state.trainedToday) {
-            DoneCard(state = state, onAgain = onStartWithoutCamera)
+            DoneCard(
+                state = state,
+                onAgainWithCamera = onStartWithCamera,
+                onAgainWithoutCamera = onStartWithoutCamera,
+            )
         } else {
             TodayCard(onStart = onStartWithCamera, onSkipCamera = onStartWithoutCamera)
         }
@@ -212,10 +216,28 @@ private fun TodayCard(onStart: () -> Unit, onSkipCamera: () -> Unit) {
     }
 }
 
-// ── P02-b 已完成卡：白卡 + 次按钮 ──────────────────────────────────────
-
+/**
+ * P02-b 已完成卡。
+ *
+ * ## 「再练一次」为什么要按 state 分流
+ *
+ * 首版这里写死 `onAgain = onStartWithoutCamera`，于是已经授权过摄像头的用户
+ * 一旦完成过一次训练，点「再练一次」就**永远**回到无摄像头路径 —— 首页再也
+ * 没有入口能走到校准 / 带摄像头训练（P03 → P04）。这是把"摄像头可选"变成了
+ * "摄像头只能用一次"。
+ *
+ * 现在由 [HomeUiState.cameraConsentActive]（即 `AppSettings.cameraConsentActive`，
+ * 同意过且未撤销）决定：授权过 → 走校准 → 带摄像头训练；否则 → 无摄像头训练。
+ * 按钮本身仍是同一个「再练一次」，不分叉成两个按钮 —— 设计稿 P02-b 只有一个。
+ */
 @Composable
-private fun DoneCard(state: HomeUiState, onAgain: () -> Unit) {
+private fun DoneCard(
+    state: HomeUiState,
+    onAgainWithCamera: () -> Unit,
+    onAgainWithoutCamera: () -> Unit,
+) {
+    val onAgain = if (state.cameraConsentActive) onAgainWithCamera else onAgainWithoutCamera
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -292,16 +314,9 @@ private fun SensorRow(state: HomeUiState, onOpenCalibrate: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (ready) {
-            Box(
-                Modifier
-                    .size(16.dp)
-                    .clip(CircleShape)
-                    .background(fg),
-            )
-        } else {
-            VideoGlyph(color = fg, modifier = Modifier.size(16.dp))
-        }
+        // 就绪/未开启两态统一用视频图标（设计稿 icon=video，色 #047857 = HrColorGood）。
+        // 原先就绪态画的是 16dp 实心圆，与设计稿不一致。
+        VideoGlyph(color = fg, modifier = Modifier.size(16.dp))
         Text(
             text = state.sensor.label,
             style = HrType.capsule,
