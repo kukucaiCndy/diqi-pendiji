@@ -37,10 +37,11 @@ data class CalibrateUiState(
     val faceBoxRight: Float? = null,
     val faceBoxBottom: Float? = null,
     val hint: CalibrationHint = CalibrationHint.BUILDING,
-    /** 已建立信号的秒数 */
+    /** 已建立信号的秒数 = 人脸在镜累计秒数（0..30，非墙钟；离镜 debounce 后归零）*/
     val signalSec: Int = 0,
     /** 前 30 秒的建立进度 0–1 */
     val signalProgress: Float = 0f,
+    /** 就绪 = SDK 窗口地面真相（`bridge.hasEnoughWindow`），不是秒数到点 */
     val readReady: Boolean = false,
     /** SDK 诊断（折叠区）*/
     val sdkVersion: String = "—",
@@ -69,6 +70,62 @@ data class CalibrateUiState(
 }
 
 /**
+ * 每秒一次的「人脸在镜累计」判定结果（纯数据，便于 JVM 单测）。
+ *
+ * @property sec 人脸在镜累计秒数（0..maxSec），**不是**从 init 起算的墙钟
+ * @property absentTicks 连续"无人脸"的帧数（1 秒/帧），用于 debounce
+ * @property shouldReset 本次是否应清零并调用 `bridge.reset()`
+ * @property ready 就绪 = SDK 窗口地面真相（`bridge.hasEnoughWindow`），不看墙钟
+ */
+data class CalibrationTick(
+    val sec: Int,
+    val absentTicks: Int,
+    val shouldReset: Boolean,
+    val ready: Boolean,
+)
+
+/** 连续多少帧无人脸才判"离镜"（debounce，防单帧漏检就清零）。 */
+const val ABSENT_FRAMES_TO_RESET = 2
+
+/**
+ * 校准计时/就绪的**纯函数**步进（无 Android 依赖，可直接 JVM 单测）。
+ *
+ * 规则（这就是修掉"对天花板也计时"的根因）：
+ * 1. 有脸：累计 +1 秒，封顶 [CalibrateViewModel.HR_READY_SEC]；无人脸帧计数清零。
+ * 2. 无脸：无人脸帧计数 +1；累计秒数保持不动（单帧漏检不清零）。
+ * 3. 无脸连续 ≥ [ABSENT_FRAMES_TO_RESET] 帧：秒数归零，并置 `shouldReset`
+ *    让调用方调用 `bridge.reset()` 清掉 SDK 内部窗口（重入镜真的从 0 开始）。
+ *    只在跨过门限的那一帧返回 true，避免每帧重复 reset。
+ * 4. `ready` 只认 SDK 是否攒满窗口（`windowFull`）；窗口被 reset 掉时必为 false。
+ */
+fun nextCalibrationTick(
+    faceFound: Boolean,
+    prevSec: Int,
+    absentTicks: Int,
+    windowFull: Boolean,
+    maxSec: Int = CalibrateViewModel.HR_READY_SEC,
+): CalibrationTick {
+    if (faceFound) {
+        return CalibrationTick(
+            sec = (prevSec + 1).coerceIn(0, maxSec),
+            absentTicks = 0,
+            shouldReset = false,
+            ready = windowFull,
+        )
+    }
+    val absent = absentTicks + 1
+    val shouldReset = absent == ABSENT_FRAMES_TO_RESET
+    return CalibrationTick(
+        // 单帧漏检（debounce 未满）保留原累计；跨过门限才归零。
+        sec = if (shouldReset) 0 else prevSec.coerceIn(0, maxSec),
+        absentTicks = absent,
+        shouldReset = shouldReset,
+        // reset 会清空 SDK 窗口，因此这一帧不可能"就绪"。
+        ready = windowFull && !shouldReset,
+    )
+}
+
+/**
  * 摄像头校准（P03）。
  *
  * ## 设计取舍
@@ -89,7 +146,16 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(CalibrateUiState())
     val state: StateFlow<CalibrateUiState> = _state.asStateFlow()
 
-    private var analyserStartedAtMs = 0L
+    /**
+     * 人脸在镜累计秒数（0..[HR_READY_SEC]）。
+     *
+     * **不是** `elapsedRealtime() - initAt` 那种墙钟：人脸离开不累计，
+     * 离镜 debounce 后归零，所以"先对着天花板 10s"不会白送 10 秒。
+     */
+    private var facePresentSec = 0
+
+    /** 连续无人脸帧数（ticker 一跳 = 一帧），用于离镜 debounce 与清零判定。 */
+    private var absentTicks = 0
 
     /** 供页面持有：真正的帧分析器（需要 imageProxy → ROI 的链路）*/
     val analyzer = com.diqi.demo.sensor.camera.FaceAnalyzer(
@@ -130,7 +196,8 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
                             licenseDaysLeft = diag.licenseDaysLeft,
                             failureMessage = null,
                         )
-                        analyserStartedAtMs = android.os.SystemClock.elapsedRealtime()
+                        facePresentSec = 0
+                        absentTicks = 0
                         startTicker()
                     }
                     is FacePhysBridge.Result.Failure -> {
@@ -160,7 +227,8 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
         _state.value = box.copy(
             faceFound = frame.faceFound,
             faceRatio = frame.faceRatio,
-            hint = decideHint(frame, box.signalSec),
+            // 就绪只认 SDK 窗口（上次 ticker 回读的 readReady），不看墙钟秒数。
+            hint = decideHint(frame, box.readReady),
         )
     }
 
@@ -170,40 +238,52 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
      * 顺序很重要：先判"有没有脸"，再判"大小"，再判"光照"，
      * 最后才是"建立中/就绪"。否则用户在框内但脸太小的时候
      * 会看到"信号建立中"，完全不知道要靠近。
+     *
+     * @param ready [CalibrateUiState.readReady]，即 `bridge.hasEnoughWindow`
+     *   —— 人脸在镜但 SDK 窗口未攒满时给 BUILDING，攒满才给 READY。
      */
-    private fun decideHint(frame: FaceFrame, signalSec: Int): CalibrationHint {
+    private fun decideHint(frame: FaceFrame, ready: Boolean): CalibrationHint {
         if (!frame.faceFound) return CalibrationHint.NO_FACE
         if (frame.faceRatio < MIN_FACE_RATIO) return CalibrationHint.FACE_TOO_SMALL
         if (frame.faceRatio > MAX_FACE_RATIO) return CalibrationHint.FACE_TOO_LARGE
         if (frame.brightness < MIN_BRIGHTNESS) return CalibrationHint.LOW_LIGHT
-        return if (signalSec >= HR_READY_SEC) CalibrationHint.READY else CalibrationHint.BUILDING
+        return if (ready) CalibrationHint.READY else CalibrationHint.BUILDING
     }
 
+    /**
+     * 每秒一跳的计时/就绪推进。
+     *
+     * - 秒数 = **人脸在镜累计**（[nextCalibrationTick]），离镜 debounce 后归零并
+     *   `bridge.reset()` 清 SDK 窗口；
+     * - 就绪 = `bridge.hasEnoughWindow` 地面真相，不再用"墙钟 >= 30s"推断，
+     *   所以按钮可用性与"真的能开始采集"一致。
+     */
     private fun startTicker() {
         viewModelScope.launch {
             while (isActive) {
                 val state = _state.value
-                if (state.initOk && state.faceFound) {
-                    val elapsed =
-                        ((android.os.SystemClock.elapsedRealtime() - analyserStartedAtMs) / 1000).toInt()
-                    val sec = elapsed.coerceAtLeast(0)
+                if (state.initOk) {
+                    val tick = nextCalibrationTick(
+                        faceFound = state.faceFound,
+                        prevSec = facePresentSec,
+                        absentTicks = absentTicks,
+                        windowFull = bridge.hasEnoughWindow,
+                    )
+                    facePresentSec = tick.sec
+                    absentTicks = tick.absentTicks
+                    if (tick.shouldReset) {
+                        // 离镜：清掉 SDK 内部窗口，重入镜从 0 真正重新开始攒。
+                        bridge.reset()
+                    }
                     val read = bridge.read()
                     // 刷新诊断：轮询协程更新了 licenseDaysLeftCache，但 bridge.lastDiagnostics
                     // 只在 init 时设过一次。这里每秒回读，让 License 剩余从「—」变成真实天数。
                     val diag = bridge.diagnostics()
-                    _state.value = _state.value.copy(
-                        signalSec = sec,
-                        signalProgress = (sec.toFloat() / HR_READY_SEC).coerceIn(0f, 1f),
-                        hint = decideHint(
-                            FaceFrame(
-                                faceFound = _state.value.faceFound,
-                                faceRatio = _state.value.faceRatio,
-                                brightness = if (_state.value.hint == CalibrationHint.LOW_LIGHT) 0 else 255,
-                            ),
-                            sec,
-                        ),
-                        readReady = sec >= HR_READY_SEC &&
-                            (read is MetricsRead.NoSignal || read is MetricsRead.Ok),
+                    _state.value = state.copy(
+                        signalSec = tick.sec,
+                        signalProgress = (tick.sec.toFloat() / HR_READY_SEC).coerceIn(0f, 1f),
+                        hint = decideHint(hintFrameOf(state), tick.ready),
+                        readReady = tick.ready,
                         sqi = (read as? MetricsRead.Ok)?.metrics?.sqi,
                         licenseDaysLeft = diag.licenseDaysLeft ?: state.licenseDaysLeft,
                     )
@@ -212,6 +292,17 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
     }
+
+    /**
+     * ticker 里没有新帧，用上一次的帧结论重算 hint。
+     * 亮度已经在 [onFrame] 那帧判过，这里只在"上一态是 LOW_LIGHT"时喂 0 保持暗态，
+     * 否则喂 255 表示"亮度不是当前的否决项"。
+     */
+    private fun hintFrameOf(state: CalibrateUiState): FaceFrame = FaceFrame(
+        faceFound = state.faceFound,
+        faceRatio = state.faceRatio,
+        brightness = if (state.hint == CalibrationHint.LOW_LIGHT) 0 else 255,
+    )
 
     /** 用户跳过：撤销相机同意，训练走纯语音。 */
     fun skipCamera() {
