@@ -87,10 +87,6 @@ android {
         // adaptive-icon 资源（实测报 resource not found），所以这条告警只能抑制。
         // 其余未处理的只有 GradleDependency（版本是刻意锁定的基线）。
         disable += "ObsoleteSdkInt"
-        // Camera2Interop 的 @ExperimentalCamera2Interop 是 Java 注解（非 Kotlin @RequiresOptIn），
-        // Kotlin @OptIn 无法满足 lint 的 UnsafeOptInUsageError 检查（已知互操作问题）。
-        // Camera2Interop 调用已用 runCatching 包裹，设备不支持时安全降级。
-        disable += "UnsafeOptInUsageError"
         warningsAsErrors = false
         abortOnError = true
     }

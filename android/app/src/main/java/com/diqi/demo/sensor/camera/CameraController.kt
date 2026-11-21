@@ -1,11 +1,8 @@
 package com.diqi.demo.sensor.camera
 
 import android.content.Context
-import android.hardware.camera2.CaptureRequest
 import android.util.Log
 import android.view.ViewGroup
-import androidx.camera.camera2.interop.Camera2CameraControl
-import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -55,12 +52,6 @@ class CameraController(
     private var previewUseCase: Preview? = null
     private var analysisUseCase: ImageAnalysis? = null
 
-    /** 绑定的 Camera 实例（用于运行时锁定 AE/AWB）。bindToLifecycle 后赋值。 */
-    private var camera: androidx.camera.core.Camera? = null
-
-    /** AE/AWB 是否已锁定（幂等：只锁一次）。 */
-    private val aeAwbLocked = java.util.concurrent.atomic.AtomicBoolean(false)
-
     /** 相机不可用的原因（可解释，供 UI 展示 —— FR-03 要求失败原因必须能说清）*/
     var lastError: String? = null
         private set
@@ -91,8 +82,9 @@ class CameraController(
         }
 
         val previewBuilder = Preview.Builder()
-        // AE/AWB 在启动时保持自动（原 builder 阶段锁死导致初始场景曝光/色偏），
-        // 首次检测到人脸后再通过 lockAeAwb() 锁定收敛值。
+        // AE/AWB **全程自动**（用户裁决 2026-11-21：锁定实验移除，待 SQI 证据再议）。
+        // 历史：曾尝试「首帧锁定 AE/AWB」，但锁定时实测 sqi 只有 0.15–0.49，
+        // 怀疑锁死收敛值压制了 SQI，故退回全自动、交给相机自己持续收敛。
 
         val preview = previewBuilder.build().also { p ->
             previewView?.let { p.surfaceProvider = it.surfaceProvider }
@@ -129,7 +121,7 @@ class CameraController(
         preview: Preview,
         analysis: ImageAnalysis,
     ) {
-        camera = cameraProvider.bindToLifecycle(
+        cameraProvider.bindToLifecycle(
             lifecycleOwner,
             CameraSelector.DEFAULT_FRONT_CAMERA,
             preview,
@@ -167,39 +159,6 @@ class CameraController(
         Log.d(TAG, "[camera-trace] stop()")
         unbindOwn("stop")
         bound = false
-        camera = null
-        aeAwbLocked.set(false)
-    }
-
-    /**
-     * 锁定自动曝光（AE）与自动白平衡（AWB）的当前收敛值。
-     *
-     * **关键区别**：
-     * - `CONTROL_AWB_LOCK=true` 锁定 AWB 当前收敛值（保持已收敛的色彩）。
-     * - `CONTROL_AWB_MODE=OFF` 是**禁用**白平衡（无收敛 → 色偏，干扰 blazeface 检测）。
-     *
-     * 调用时机：首次检测到人脸后（AWB/AE 已对当前场景收敛）调用一次。
-     * 幂等：[aeAwbLocked] 保证只锁一次，重复调用无副作用。
-     * 设备不支持时 runCatching 吞掉，不影响正常使用。
-     */
-    fun lockAeAwb() {
-        if (!aeAwbLocked.compareAndSet(false, true)) return
-        val cam = camera ?: run {
-            Log.w(TAG, "lockAeAwb: camera 未绑定，跳过")
-            return
-        }
-        runCatching {
-            // 用 Camera2CameraControl 在运行时（repeating request 上）设捕获请求选项，
-            // 而非 builder 阶段。这样启动时 AE/AWB 保持自动，首帧检测到人脸后锁定收敛值。
-            val options = CaptureRequestOptions.Builder()
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
-                .build()
-            Camera2CameraControl.from(cam.cameraControl).addCaptureRequestOptions(options)
-            Log.d(TAG, "AE/AWB 已锁定（首次检测到人脸）")
-        }.onFailure { e ->
-            Log.w(TAG, "lockAeAwb 不可用（设备可能不支持）：${e.message}")
-        }
     }
 
     /** 彻底释放。页面销毁时调用。 */
@@ -207,9 +166,7 @@ class CameraController(
         Log.d(TAG, "[camera-trace] release()")
         unbindOwn("release")
         provider = null
-        camera = null
         bound = false
-        aeAwbLocked.set(false)
         analysisExecutor?.shutdown()
         analysisExecutor = null
         analyzer.release()

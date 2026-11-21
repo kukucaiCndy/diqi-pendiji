@@ -124,11 +124,6 @@ fun CalibrateScreen(
         onDispose { camera.release() }
     }
 
-    // 首次检测到人脸时锁定 AE/AWB（AWB 已对当前场景收敛，锁定而非禁用）
-    LaunchedEffect(state.faceFound) {
-        if (state.faceFound) camera.lockAeAwb()
-    }
-
     // 三态（设计稿 P03-a/b/c）：建立中 / 未对准（含过小/过大/弱光）/ 就绪
     val phase = phaseOf(state.hint)
 

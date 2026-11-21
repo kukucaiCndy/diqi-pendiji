@@ -155,11 +155,6 @@ fun TrainingScreen(
         }
     }
 
-    // 首次检测到人脸时锁定 AE/AWB（AWB 已对当前场景收敛，锁定而非禁用）
-    LaunchedEffect(meta.isRealSensor, meta.faceFound) {
-        if (meta.isRealSensor && meta.faceFound) camera?.lockAeAwb()
-    }
-
     LaunchedEffect(meta.finished) {
         if (meta.finished) onFinished(meta.savedSessionId)
     }
