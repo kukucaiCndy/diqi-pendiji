@@ -70,6 +70,12 @@ object UiTag {
     // ── 训练中 P04 ────────────────────────────────────────────────────────
     const val P04_ROOT = "p04.root"
     const val P04_PHASE_TIMELINE = "p04.phase_timeline"
+
+    /** P04-a 深色阶段时间轴（设计稿 阶段时间轴 区块）*/
+    const val P04_TIMELINE = "p04.timeline"
+
+    /** P04-a 视频区的人脸框（设计稿 184×228 r96）*/
+    const val P04_FACE_BOX = "p04.face_box"
     const val P04_PHASE_NAME = "p04.phase_name"
     const val P04_COUNTDOWN = "p04.countdown"
     const val P04_RHYTHM_RING = "p04.rhythm_ring"
@@ -79,6 +85,9 @@ object UiTag {
     const val P04_METRIC_AREA = "p04.metric_area"
     const val P04_METRIC_HR = "p04.metric.hr"
     const val P04_METRIC_BR = "p04.metric.br"
+
+    /** P04-a 呼吸率波形卡（设计稿 RR 卡）*/
+    const val P04_METRIC_RR = "p04.metric.rr"
     const val P04_METRIC_QUALITY = "p04.metric.quality"
     const val P04_METRIC_PLACEHOLDER = "p04.metric.placeholder"
     const val P04_DISCLAIMER = "p04.disclaimer"

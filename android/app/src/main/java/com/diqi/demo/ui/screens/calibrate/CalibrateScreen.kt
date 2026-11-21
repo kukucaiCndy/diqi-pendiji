@@ -5,18 +5,31 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -29,39 +42,39 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.diqi.demo.sensor.camera.CameraController
 import com.diqi.demo.sensor.camera.fillParent
 import com.diqi.demo.ui.UiTag
-import com.diqi.demo.ui.components.ChipTone
-import com.diqi.demo.ui.components.HrBanner
-import com.diqi.demo.ui.components.HrCard
-import com.diqi.demo.ui.components.HrPage
-import com.diqi.demo.ui.components.HrPrimaryButton
-import com.diqi.demo.ui.components.HrSecondaryButton
-import com.diqi.demo.ui.components.HrStatusChip
-import com.diqi.demo.ui.components.VSpace
 import com.diqi.demo.ui.rememberContainerViewModel
-import com.diqi.demo.ui.theme.HrColor
-import com.diqi.demo.ui.theme.HrRadius
-import com.diqi.demo.ui.theme.HrSize
-import com.diqi.demo.ui.theme.HrSpacing
-import com.diqi.demo.ui.theme.HrType
 
 /**
  * P03 摄像头校准（可选）。
  *
- * ## 这个页面承担的三件事
+ * ## 数值来源
  *
- * 1. **把"摄像头是可选"这件事讲清楚**：预览上方文案 + 常驻「跳过，直接训练」
- * 2. **四类实时反馈**：未检测到人脸 / 脸过小过大 / 光照不足 / 信号建立中（FR-03）
- * 3. **诊断可解释**：SDK 版本、初始化结果、License 剩余、当前 SQI，折叠在底部
+ * 全部取自 `docs/DESIGN-SPEC.md` 的 `P03-c`：视频区 h430 `#1B2A38`、
+ * 人脸框 232×288 r120 `#5EEAD4`、相机角标 132×30 r15 `#0F1A24B3`、
+ * 镜像标 86×30、状态字 15/700 `#5EEAD4`、
+ * 下区 padding22 gap16：主提示 28/700、辅助 15/400 `#64748B`、
+ * 诊断卡 r12 p[14,16] `#F8FAFC` + `#E2E8F0`（头 12/700 `#475569`，行 11sp）、
+ * 主按钮 h56 r28 `#0F1A24` + 17 图标 + 17/700。
+ *
+ * ## 两点保持不变的硬约束
+ *
+ * 1. **摄像头是可选**：无需授权即可「跳过，直接训练」完成练习（AC-04）
+ * 2. **失败必须可解释**：SDK 不可用时诊断区如实显示原因，不静默失败
  */
 @Composable
 fun CalibrateScreen(
@@ -81,14 +94,12 @@ fun CalibrateScreen(
                 PackageManager.PERMISSION_GRANTED,
         )
     }
-
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { ok ->
         granted = ok
         vm.onPermissionResult(ok)
     }
-
     LaunchedEffect(Unit) {
         if (granted) vm.onPermissionResult(true) else launcher.launch(Manifest.permission.CAMERA)
     }
@@ -99,23 +110,25 @@ fun CalibrateScreen(
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
     }
-    val camera = remember {
-        CameraController(context, lifecycleOwner, vm.analyzer)
-    }
-
+    val camera = remember { CameraController(context, lifecycleOwner, vm.analyzer) }
     DisposableEffect(granted) {
         if (granted) camera.start(previewView)
         onDispose { camera.release() }
     }
 
-    HrPage(modifier = modifier, tag = UiTag.P03_ROOT) {
-        // ── 视频区 + 人脸框 ───────────────────────────────────────────────
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .testTag(UiTag.P03_ROOT),
+    ) {
+        // ── 视频区 h430（本机 827dp 屏高，取 340 保证下区完整可见）────────
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(280.dp)
-                .clip(HrRadius.cardShape)
-                .background(HrColor.PanelSecond),
+                .height(340.dp)
+                .background(HrVideoBg),
         ) {
             if (granted) {
                 AndroidView(
@@ -124,223 +137,247 @@ fun CalibrateScreen(
                         .fillMaxSize()
                         .testTag(UiTag.P03_PREVIEW),
                 )
-                // 人脸框：居中固定尺寸，作为"把脸放进框里"的参照（设计稿 200×248）
+                // 人脸框 232×288 r120
                 Box(
                     Modifier
                         .align(Alignment.Center)
-                        .size(width = HrSize.faceBoxWidth, height = HrSize.faceBoxHeight)
+                        .size(width = 232.dp, height = 288.dp)
                         .border(
-                            width = 2.dp,
-                            color = when (state.hint) {
-                                CalibrationHint.READY -> HrColor.Accent
-                                CalibrationHint.NO_FACE -> HrColor.Surface
-                                else -> HrColor.Amber500
-                            },
-                            shape = RoundedCornerShape(24.dp),
+                            BorderStroke(2.dp, HrAccent),
+                            RoundedCornerShape(120.dp),
                         )
                         .testTag(UiTag.P03_FACE_BOX),
                 )
-                // 相机角标
-                Row(
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .padding(HrSpacing.xs)
-                        .clip(HrRadius.capsuleShape)
-                        .background(HrColor.ScrimChip)
-                        .padding(horizontal = HrSpacing.xs, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Box(
-                        Modifier
-                            .size(8.dp)
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(
-                                if (state.hint == CalibrationHint.READY) {
-                                    HrColor.Accent
-                                } else {
-                                    HrColor.Amber500
-                                },
-                            ),
-                    )
-                    Text(
-                        if (state.hint == CalibrationHint.READY) "感知中" else "建立中",
-                        style = HrType.micro,
-                        color = HrColor.Surface,
-                    )
-                }
-                // 镜像标记
-                Text(
-                    "镜像显示",
-                    style = HrType.micro,
-                    color = HrColor.Surface,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(HrSpacing.xs)
-                        .clip(HrRadius.capsuleShape)
-                        .background(HrColor.ScrimChip)
-                        .padding(horizontal = HrSpacing.xs, vertical = 4.dp),
-                )
             } else {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(HrSpacing.md),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        "没有相机权限",
-                        style = HrType.bodyMediumBold,
-                        color = HrColor.Surface,
-                    )
-                    VSpace(HrSpacing.xxs)
-                    Text(
-                        "不开摄像头也能完整训练，直接点下面的按钮即可。",
-                        style = HrType.labelSmall,
-                        color = HrColor.TimelineLabel,
-                    )
-                }
+                Text(
+                    "未开启摄像头\n不影响练习",
+                    fontSize = 13.sp,
+                    color = HrMuted,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center),
+                )
             }
 
-            // 状态字（覆盖在底部）
+            // 底部渐变
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .height(100.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD90F1A24)))),
+            )
+
+            // 相机角标（左上）
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 12.dp, top = 12.dp)
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(Color(0xB30F1A24))
+                    .padding(horizontal = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (granted) HrAccent else HrMuted),
+                )
+                Text(
+                    if (granted) "摄像头工作中" else "未开启摄像头",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                )
+            }
+
+            // 镜像标（右上）
+            if (granted) {
+                Text(
+                    "镜像",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(end = 12.dp, top = 12.dp)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(Color(0xB30F1A24))
+                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                )
+            }
+
+            // 状态字 15/700 accent
             Text(
                 text = state.statusText,
-                style = HrType.bodyMediumBold,
-                color = if (state.hint == CalibrationHint.READY) HrColor.Accent else HrColor.Amber300,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (state.readReady) HrAccent else Color(0xFFFBBF24),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(HrColor.ScrimFaceMask)
-                    .padding(HrSpacing.xs)
+                    .padding(start = 22.dp, end = 22.dp, bottom = 14.dp)
                     .testTag(UiTag.P03_STATUS_TEXT),
             )
         }
 
-        VSpace(HrSpacing.xs)
-
-        Text(
-            "摄像头只用来看你的面部变化，画面不会保存，也不会传出去。",
-            style = HrType.bodySmall,
-            color = HrColor.InkSecondary,
-        )
-
-        // 建立进度环（简化：用横向进度条 + 秒数，与时间轴风格一致）
-        VSpace(HrSpacing.sm)
-        Box(
-            Modifier
+        // ── 下区 ────────────────────────────────────────────────────────
+        Column(
+            modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .height(8.dp)
-                .clip(HrRadius.capsuleShape)
-                .background(HrColor.Line)
-                .testTag(UiTag.P03_SIGNAL_RING),
+                .verticalScroll(rememberScrollState())
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    if (state.readReady) "可以开始了" else "正在建立信号",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HrInk,
+                )
+                Text(
+                    if (state.readReady) {
+                        "信号已建立，现在开始能记录到完整数据"
+                    } else {
+                        "把脸放进框里，保持不动约 30 秒"
+                    },
+                    fontSize = 15.sp,
+                    color = HrMuted,
+                )
+            }
+
+            // 建立进度条
             Box(
                 Modifier
-                    .fillMaxWidth(state.signalProgress)
-                    .height(8.dp)
-                    .clip(HrRadius.capsuleShape)
-                    .background(HrColor.Brand),
-            )
-        }
-
-        // 失败原因必须可解释（FR-03）
-        val reason = state.failureMessage ?: state.cameraError
-        if (reason != null) {
-            VSpace(HrSpacing.sm)
-            HrBanner(
-                text = reason,
-                tone = ChipTone.WARN,
-                tag = UiTag.P03_FAILURE_REASON,
-            )
-        }
-
-        VSpace(HrSpacing.sm)
-
-        // 三条操作提示（设计稿 P03-b）
-        HrCard(color = HrColor.SubtleContainer) {
-            Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xxs)) {
-                HintRow("面向光源，不要背对窗户")
-                HintRow("脸占画面 20%–60% 最合适")
-                HintRow("手机立在桌上，与脸齐高")
-            }
-        }
-
-        VSpace(HrSpacing.sm)
-
-        // 诊断折叠区（P03 设计稿）
-        HrCard(color = HrColor.FaintContainer, modifier = Modifier.testTag(UiTag.P03_DIAGNOSTICS)) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("设备诊断", style = HrType.label, color = HrColor.Slate600)
-                DiagRow("SDK 版本", state.sdkVersion, UiTag.P03_DIAG_SDK_VERSION)
-                DiagRow(
-                    "初始化",
-                    if (state.initOk) "已就绪" else (reason ?: "未开始"),
-                    UiTag.P03_DIAG_INIT,
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(HrLine)
+                    .testTag(UiTag.P03_SIGNAL_RING),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(state.signalProgress)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(HrBrand),
                 )
+            }
+
+            // 失败原因可解释
+            val reason = state.failureMessage ?: state.cameraError
+            if (reason != null) {
+                Text(
+                    reason,
+                    fontSize = 13.sp,
+                    color = HrWarn,
+                    modifier = Modifier.testTag(UiTag.P03_FAILURE_REASON),
+                )
+            }
+
+            // 设备诊断卡
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(HrFaint)
+                    .border(BorderStroke(1.dp, HrLine), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .testTag(UiTag.P03_DIAGNOSTICS),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("设备诊断", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HrIcon)
+                    Text("⌄", fontSize = 12.sp, color = HrMuted)
+                }
+                DiagRow("SDK 版本", state.sdkVersion, UiTag.P03_DIAG_SDK_VERSION)
+                DiagRow("初始化", if (state.initOk) "成功" else (reason ?: "未开始"), UiTag.P03_DIAG_INIT)
                 DiagRow(
                     "License 剩余",
                     state.licenseDaysLeft?.let { "$it 天" } ?: "—",
                     UiTag.P03_DIAG_LICENSE,
                 )
-                DiagRow(
-                    "当前 SQI",
-                    state.sqi?.let { "%.2f".format(it) } ?: "—",
-                    UiTag.P03_DIAG_SQI,
-                )
+                DiagRow("当前 SQI", state.sqi?.let { "%.2f".format(it) } ?: "—", UiTag.P03_DIAG_SQI)
                 DiagRow("ROI 字节", "${state.roiBytes} / 243", null)
             }
         }
 
-        VSpace(HrSpacing.md)
-
-        HrPrimaryButton(
-            text = if (state.canStartWithSensor) "开始训练" else "信号还没建立好",
-            tag = UiTag.P03_PRIMARY_BUTTON,
-            enabled = state.canStartWithSensor,
-            onClick = onStartWithSensor,
-        )
-
-        VSpace(HrSpacing.xs)
-
-        HrSecondaryButton(
-            text = "跳过，直接训练",
-            tag = UiTag.P03_SKIP_BUTTON,
-            onClick = {
-                vm.skipCamera()
-                onSkip()
-            },
-        )
-
-        VSpace(HrSpacing.xxl)
-    }
-}
-
-@Composable
-private fun HintRow(text: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(HrSpacing.xs),
-    ) {
-        Box(
-            Modifier
-                .size(6.dp)
-                .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(HrColor.Brand),
-        )
-        Text(text, style = HrType.labelSmall, color = HrColor.Slate700)
+        // ── 主按钮（就绪才亮）+ 跳过 ────────────────────────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 22.dp, end = 22.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(if (state.readReady) HrInk else HrTrack)
+                    .clickable(enabled = state.readReady, role = Role.Button, onClick = onStartWithSensor)
+                    .testTag(UiTag.P03_PRIMARY_BUTTON),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("开始训练", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+            // 摄像头可选：跳过常驻（AC-04）
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .border(BorderStroke(1.dp, HrTrack), RoundedCornerShape(26.dp))
+                    .clickable(role = Role.Button) {
+                        vm.skipCamera()
+                        onSkip()
+                    }
+                    .testTag(UiTag.P03_SKIP_BUTTON),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("跳过，直接训练", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = HrInk)
+            }
+        }
     }
 }
 
 @Composable
 private fun DiagRow(key: String, value: String, tag: String?) {
     Row(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .let { if (tag != null) it.then(Modifier.testTag(tag)) else it },
+            .then(if (tag != null) Modifier.testTag(tag) else Modifier),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(key, style = HrType.micro, color = HrColor.WeakText)
-        Text(value, style = HrType.micro, color = HrColor.Slate700)
+        Text(key, fontSize = 11.sp, color = HrMuted)
+        Text(value, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = HrSlate)
     }
 }
+
+private val HrInk = Color(0xFF0F1A24)
+private val HrMuted = Color(0xFF64748B)
+private val HrLine = Color(0xFFE2E8F0)
+private val HrTrack = Color(0xFFCBD5E1)
+private val HrFaint = Color(0xFFF8FAFC)
+private val HrIcon = Color(0xFF475569)
+private val HrSlate = Color(0xFF334155)
+private val HrBrand = Color(0xFF0F766E)
+private val HrWarn = Color(0xFFB45309)
+private val HrAccent = Color(0xFF5EEAD4)
+private val HrVideoBg = Color(0xFF1B2A38)

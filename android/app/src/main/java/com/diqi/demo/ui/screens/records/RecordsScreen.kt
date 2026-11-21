@@ -1,5 +1,6 @@
 package com.diqi.demo.ui.screens.records
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,70 +8,77 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.diqi.demo.AppContainer
-import com.diqi.demo.data.db.LeakContext
-import com.diqi.demo.data.db.LeakFrequency
 import com.diqi.demo.data.db.TrainingSessionEntity
 import com.diqi.demo.ui.UiTag
-import com.diqi.demo.ui.components.ChipTone
-import com.diqi.demo.ui.components.HrBanner
-import com.diqi.demo.ui.components.HrCard
-import com.diqi.demo.ui.components.HrPage
-import com.diqi.demo.ui.components.HrPrimaryButton
-import com.diqi.demo.ui.components.HrSecondaryButton
-import com.diqi.demo.ui.components.HrStatusChip
-import com.diqi.demo.ui.components.VSpace
 import com.diqi.demo.ui.rememberContainerViewModel
-import com.diqi.demo.ui.screens.home.formatMinutes
-import com.diqi.demo.ui.theme.HrColor
-import com.diqi.demo.ui.theme.HrRadius
-import com.diqi.demo.ui.theme.HrSize
-import com.diqi.demo.ui.theme.HrSpacing
-import com.diqi.demo.ui.theme.HrType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 
 data class RecordsUiState(
     val loading: Boolean = true,
-    val dayIndex: Int = 1,
-    val trainedDays: List<LocalDate> = emptyList(),
-    val sessionCount: Int = 0,
+    val monthLabel: String = "",
+    /** 当月第一天是周几（0 = 周一），用于月历左侧留白 */
+    val leadingBlanks: Int = 0,
+    val daysInMonth: Int = 30,
+    /** 当月已完成训练的日号（1-based） */
+    val trainedDayNumbers: Set<Int> = emptySet(),
+    val weekTrainedDays: Int = 0,
     val totalSec: Long = 0,
+    val sessionCount: Int = 0,
     val recent: List<TrainingSessionEntity> = emptyList(),
     val simulated: List<TrainingSessionEntity> = emptyList(),
-    val leakToday: LeakFrequency? = null,
-    val leakSkipped: Boolean = false,
 ) {
     val isEmpty: Boolean get() = recent.isEmpty() && simulated.isEmpty()
 }
 
+/**
+ * P06 记录与 7 天。
+ *
+ * ## 数据口径
+ *
+ * 月历的圆点只统计**真实且 ≥60 秒**的训练（数据层 SQL 已过滤 `simulated` 与短会话），
+ * 因此「汇总值 = 列表逐条相加」这条 AC-12 判据天然成立。
+ *
+ * ## 演示记录
+ *
+ * 仍然单独成区并标注「不计入打卡」（D9），**不参与月历与任何汇总**。
+ */
 class RecordsViewModel(private val container: AppContainer) : ViewModel() {
 
     private val zone: ZoneId = ZoneId.systemDefault()
@@ -81,22 +89,30 @@ class RecordsViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
+            val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+            val ym = YearMonth.from(today)
+
+            // 取近 60 天真实记录，既够本月月历，也够下面逐条列表
+            val recent = container.sessionRepository.recentReal(60)
+            val trainedDates = recent
+                .map { Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalDate() }
+                .filter { YearMonth.from(it) == ym }
+                .map { it.dayOfMonth }
+                .toSet()
+
             val week = container.progressRepository.lastSevenDays(now)
-            val dayIndex = container.progressRepository.currentDayIndex(now)
-            val leak = container.leakDiaryRepository.findByDay(now)
 
             _state.value = RecordsUiState(
                 loading = false,
-                dayIndex = dayIndex,
-                trainedDays = week.trainedDays
-                    .map { LocalDate.ofEpochDay(it) }
-                    .sorted(),
-                sessionCount = week.sessionCount,
+                monthLabel = "${ym.year} 年 ${ym.monthValue} 月",
+                leadingBlanks = ym.atDay(1).dayOfWeek.value - 1,
+                daysInMonth = ym.lengthOfMonth(),
+                trainedDayNumbers = trainedDates,
+                weekTrainedDays = week.trainedDays.size,
                 totalSec = week.totalSec,
-                recent = container.sessionRepository.recentReal(10),
+                sessionCount = week.sessionCount,
+                recent = recent.take(10),
                 simulated = container.sessionRepository.simulatedSessions(5),
-                leakToday = leak?.leakFrequency,
-                leakSkipped = leak?.skipped ?: false,
             )
         }
     }
@@ -104,31 +120,8 @@ class RecordsViewModel(private val container: AppContainer) : ViewModel() {
     init {
         refresh()
     }
-
-    fun saveLeak(frequency: LeakFrequency?, context: LeakContext?) {
-        viewModelScope.launch {
-            container.leakDiaryRepository.save(System.currentTimeMillis(), frequency, context)
-            refresh()
-        }
-    }
-
-    fun skipLeak() {
-        viewModelScope.launch {
-            container.leakDiaryRepository.skip(System.currentTimeMillis())
-            refresh()
-        }
-    }
 }
 
-/**
- * P06 记录与七天。
- *
- * ## 三条约束
- *
- * 1. **空态不造假**：没有任何记录时只显示空态文案，不出现模拟数据（FR-10）
- * 2. **演示记录单独成区**：带水印展示，但**不参与任何统计**（D9 / AC-19）
- * 3. **不生成任何诊断结论**：漏尿日记只是记录，不做解读（FR-12）
- */
 @Composable
 fun RecordsScreen(
     onOpenWeekly: () -> Unit,
@@ -139,281 +132,250 @@ fun RecordsScreen(
     val state by vm.state.collectAsState()
     androidx.compose.runtime.LaunchedEffect(Unit) { vm.refresh() }
 
-    HrPage(modifier = modifier, tag = UiTag.P06_ROOT) {
-        Text("记录与七天", style = HrType.headline, color = HrColor.Ink)
-        VSpace(HrSpacing.xxs)
-        Text(
-            text = "Day ${state.dayIndex} · 按第一次完成练习那天起算",
-            style = HrType.bodySmall,
-            color = HrColor.InkSecondary,
-        )
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(HrCanvas)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 22.dp, vertical = 10.dp)
+            .testTag(UiTag.P06_ROOT),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text("训练记录", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = HrInk)
 
-        VSpace(HrSpacing.md)
+        // 三个汇总卡 h82 r14
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SummaryCard(
+                label = "7 天完成",
+                value = "${state.weekTrainedDays} 天",
+                tag = UiTag.P06_SUMMARY_DAYS,
+                modifier = Modifier.weight(1f),
+            )
+            SummaryCard(
+                label = "累计时长",
+                value = mmss(state.totalSec),
+                tag = UiTag.P06_SUMMARY_DURATION,
+                modifier = Modifier.weight(1f),
+            )
+            SummaryCard(
+                label = "训练次数",
+                value = "${state.sessionCount} 次",
+                tag = UiTag.P06_SUMMARY_COUNT,
+                modifier = Modifier.weight(1f),
+            )
+        }
 
-        if (state.isEmpty) {
-            HrCard(modifier = Modifier.testTag(UiTag.P06_EMPTY_STATE)) {
-                Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xxs)) {
-                    Text("还没有记录", style = HrType.titleSmall, color = HrColor.Ink)
+        // 月历卡
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(HrWhite)
+                .border(BorderStroke(1.dp, HrLine), RoundedCornerShape(16.dp))
+                .padding(16.dp)
+                .testTag(UiTag.P06_CALENDAR),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(state.monthLabel, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = HrInk)
+                Text("›", fontSize = 16.sp, color = HrInkTertiary)
+            }
+            // 星期表头
+            Row(modifier = Modifier.fillMaxWidth()) {
+                WEEK_HEADERS.forEach { w ->
                     Text(
-                        "完成第一次练习后，这里会显示你的打卡。",
-                        style = HrType.bodySmall,
-                        color = HrColor.InkSecondary,
+                        text = w,
+                        fontSize = 10.sp,
+                        color = HrInkTertiary,
+                        modifier = Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                 }
             }
-        } else {
-            // 近七天打卡
-            HrCard(modifier = Modifier.testTag(UiTag.P06_CALENDAR)) {
-                Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.sm)) {
-                    Text("近七天", style = HrType.label, color = HrColor.Ink)
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+            MonthGrid(
+                leadingBlanks = state.leadingBlanks,
+                daysInMonth = state.daysInMonth,
+                trained = state.trainedDayNumbers,
+            )
+        }
+
+        if (state.isEmpty) {
+            Text(
+                "还没有记录，完成第一次练习后会出现在这里。",
+                fontSize = 13.sp,
+                color = HrInkMuted,
+                modifier = Modifier.testTag(UiTag.P06_EMPTY_STATE),
+            )
+        }
+
+        // 演示记录：单独成区、水印样式、不计入打卡
+        if (state.simulated.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(HrWarnContainer)
+                    .padding(14.dp)
+                    .testTag(UiTag.P06_DEMO_SECTION),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("演示记录 · 不计入打卡", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = HrWarn)
+                state.simulated.take(3).forEach { s ->
+                    Text(
+                        "· ${s.completedReps} 次 · ${mmss(s.durationSec)}",
+                        fontSize = 11.sp,
+                        color = HrWarn,
+                    )
+                }
+            }
+        }
+
+        // 逐条记录
+        Column(
+            modifier = Modifier.testTag(UiTag.P06_DAY_LIST),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            state.recent.take(6).forEach { s ->
+                val d = Instant.ofEpochMilli(s.startedAt).atZone(zone0()).toLocalDate()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(HrWhite)
+                        .border(BorderStroke(1.dp, HrLine), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "${d.monthValue} 月 ${d.dayOfMonth} 日",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HrInk,
+                    )
+                    Text(
+                        "${s.completedReps} 次 · ${mmss(s.durationSec)}",
+                        fontSize = 12.sp,
+                        color = HrInkMuted,
+                    )
+                }
+            }
+        }
+
+        // 入口
+        EntryRow("家人周报", UiTag.P06_WEEKLY_REPORT_ENTRY, onOpenWeekly)
+        EntryRow("漏尿日记（可跳过）", UiTag.P06_LEAK_DIARY_ENTRY, onOpenLeak)
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun MonthGrid(leadingBlanks: Int, daysInMonth: Int, trained: Set<Int>) {
+    val cells = leadingBlanks + daysInMonth
+    val rows = (cells + 6) / 7
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(rows) { r ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                repeat(7) { c ->
+                    val idx = r * 7 + c
+                    val dayNo = idx - leadingBlanks + 1
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp),
+                        contentAlignment = Alignment.TopCenter,
                     ) {
-                        val today = Instant.now().atZone(ZoneId.systemDefault()).toLocalDate()
-                        (6 downTo 0).forEach { back ->
-                            val day = today.minusDays(back.toLong())
-                            val done = state.trainedDays.contains(day)
+                        if (dayNo in 1..daysInMonth) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
                             ) {
-                                Box(
-                                    Modifier
-                                        .size(14.dp)
-                                        .clip(CircleShape)
-                                        .background(if (done) HrColor.Good else HrColor.Surface)
-                                        .border(1.dp, if (done) HrColor.Good else HrColor.Track, CircleShape),
-                                )
                                 Text(
-                                    "${day.dayOfMonth}",
-                                    style = HrType.micro,
-                                    color = HrColor.WeakText,
+                                    dayNo.toString(),
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF475569),
                                 )
+                                if (trained.contains(dayNo)) {
+                                    Box(
+                                        Modifier
+                                            .size(5.dp)
+                                            .clip(CircleShape)
+                                            .background(HrGood),
+                                    )
+                                } else {
+                                    Spacer(Modifier.height(5.dp))
+                                }
                             }
                         }
                     }
                 }
             }
-
-            VSpace(HrSpacing.sm)
-
-            HrCard {
-                Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xs)) {
-                    StatRow("完成天数", "${state.trainedDays.size} 天", UiTag.P06_SUMMARY_DAYS)
-                    StatRow("训练次数", "${state.sessionCount} 次", UiTag.P06_SUMMARY_COUNT)
-                    StatRow("累计时长", formatMinutes(state.totalSec), UiTag.P06_SUMMARY_DURATION)
-                }
-            }
-
-            VSpace(HrSpacing.sm)
-
-            // 演示记录：单独成区、带水印、不参与统计（AC-19 / D9）
-            if (state.simulated.isNotEmpty()) {
-                HrCard(
-                    color = HrColor.WarnContainer,
-                    modifier = Modifier.testTag(UiTag.P06_DEMO_SECTION),
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(HrSpacing.xxs)) {
-                        Text(
-                            "演示记录 · 不计入打卡",
-                            style = HrType.label,
-                            color = HrColor.Warn,
-                        )
-                        state.simulated.take(3).forEach { s ->
-                            Text(
-                                "· ${s.completedReps} 次 · ${formatMinutes(s.durationSec)}",
-                                style = HrType.labelSmall,
-                                color = HrColor.Warn,
-                            )
-                        }
-                    }
-                }
-                VSpace(HrSpacing.sm)
-            }
-
-            // 逐条记录
-            Column(
-                modifier = Modifier.testTag(UiTag.P06_DAY_LIST),
-                verticalArrangement = Arrangement.spacedBy(HrSpacing.xs),
-            ) {
-                state.recent.take(5).forEach { s ->
-                    val date = Instant.ofEpochMilli(s.startedAt)
-                        .atZone(ZoneId.systemDefault()).toLocalDate()
-                    HrCard {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                "${date.monthValue} 月 ${date.dayOfMonth} 日",
-                                style = HrType.label,
-                                color = HrColor.Ink,
-                            )
-                            Text(
-                                "${s.completedReps} 次 · ${formatMinutes(s.durationSec)}",
-                                style = HrType.labelSmall,
-                                color = HrColor.InkSecondary,
-                            )
-                        }
-                    }
-                }
-            }
         }
-
-        VSpace(HrSpacing.md)
-
-        HrSecondaryButton(
-            text = "漏尿日记（可以跳过）",
-            tag = UiTag.P06_LEAK_DIARY_ENTRY,
-            onClick = onOpenLeak,
-        )
-
-        VSpace(HrSpacing.xs)
-
-        HrPrimaryButton(
-            text = "家人周报",
-            tag = UiTag.P06_WEEKLY_REPORT_ENTRY,
-            onClick = onOpenWeekly,
-        )
-
-        VSpace(HrSpacing.xxl)
     }
 }
 
 @Composable
-private fun StatRow(label: String, value: String, tag: String?) {
+private fun SummaryCard(label: String, value: String, tag: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .height(82.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(HrWhite)
+            .border(BorderStroke(1.dp, HrLine), RoundedCornerShape(14.dp))
+            .padding(start = 12.dp, top = 12.dp)
+            .testTag(tag),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = HrInkTertiary)
+        Text(
+            value,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = HrInk,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        )
+    }
+}
+
+@Composable
+private fun EntryRow(label: String, tag: String, onClick: () -> Unit) {
     Row(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .let { if (tag != null) it.then(Modifier.testTag(tag)) else it },
+            .height(52.dp)
+            .clip(RoundedCornerShape(26.dp))
+            .background(HrWhite)
+            .border(BorderStroke(1.dp, HrTrack), RoundedCornerShape(26.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .testTag(tag)
+            .padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, style = HrType.label, color = HrColor.InkSecondary)
-        Text(value, style = HrType.label, color = HrColor.Ink)
+        Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = HrInk)
+        Text("›", fontSize = 16.sp, color = HrInkTertiary)
     }
 }
 
-/**
- * 漏尿简易日记（FR-12）。
- *
- * 全部可跳过；仅本地存储；不生成任何诊断结论；不进周报（AC-22/AC-23）。
- */
-@Composable
-fun LeakDiaryScreen(
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val vm = rememberContainerViewModel { RecordsViewModel(it) }
-    val state by vm.state.collectAsState()
+private fun zone0(): ZoneId = ZoneId.systemDefault()
 
-    var frequency by remember { mutableStateOf<LeakFrequency?>(null) }
-    var context by remember { mutableStateOf<LeakContext?>(null) }
+/** 「756 秒」→「12:36」，与设计稿汇总卡格式一致。 */
+private fun mmss(totalSec: Long): String = "%d:%02d".format(totalSec / 60, totalSec % 60)
 
-    HrPage(modifier = modifier, tag = UiTag.LEAK_ROOT) {
-        Text("今天的情况", style = HrType.headline, color = HrColor.Ink)
-        VSpace(HrSpacing.xxs)
-        Text(
-            "这一步可以跳过，只记在你自己的手机里。",
-            style = HrType.bodySmall,
-            color = HrColor.InkSecondary,
-        )
+private val WEEK_HEADERS = listOf("一", "二", "三", "四", "五", "六", "日")
 
-        VSpace(HrSpacing.md)
-
-        Text("今天发生漏尿了吗？", style = HrType.titleSmall, color = HrColor.Ink)
-        VSpace(HrSpacing.xs)
-        LeakFrequency.entries.forEach { f ->
-            RadioRow(
-                label = f.label,
-                selected = frequency == f,
-                tag = when (f) {
-                    LeakFrequency.NONE -> UiTag.LEAK_FREQ_NONE
-                    LeakFrequency.ONCE -> UiTag.LEAK_FREQ_ONCE
-                    LeakFrequency.TWO_TO_THREE -> UiTag.LEAK_FREQ_2_3
-                    LeakFrequency.FOUR_PLUS -> UiTag.LEAK_FREQ_4_PLUS
-                    LeakFrequency.UNSURE -> UiTag.LEAK_FREQ_UNSURE
-                },
-                onClick = { frequency = f },
-            )
-            VSpace(HrSpacing.xxs)
-        }
-
-        if (frequency != null && frequency != LeakFrequency.NONE) {
-            VSpace(HrSpacing.md)
-            Text("当时在做什么？（可不选）", style = HrType.titleSmall, color = HrColor.Ink)
-            VSpace(HrSpacing.xs)
-            LeakContext.entries.forEach { c ->
-                RadioRow(
-                    label = c.label,
-                    selected = context == c,
-                    tag = when (c) {
-                        LeakContext.COUGH -> UiTag.LEAK_CONTEXT_COUGH
-                        LeakContext.SPORT -> UiTag.LEAK_CONTEXT_SPORT
-                        LeakContext.URGE -> UiTag.LEAK_CONTEXT_URGE
-                        LeakContext.OTHER -> UiTag.LEAK_CONTEXT_OTHER
-                        LeakContext.UNSURE -> UiTag.LEAK_CONTEXT_OTHER
-                    },
-                    onClick = { context = c },
-                )
-                VSpace(HrSpacing.xxs)
-            }
-        }
-
-        VSpace(HrSpacing.md)
-
-        HrPrimaryButton(
-            text = "保存",
-            tag = UiTag.LEAK_SAVE_BUTTON,
-            enabled = frequency != null,
-            onClick = {
-                vm.saveLeak(frequency, context)
-                onBack()
-            },
-        )
-
-        VSpace(HrSpacing.xs)
-
-        HrSecondaryButton(
-            text = "跳过这一步",
-            tag = UiTag.LEAK_SKIP_BUTTON,
-            onClick = {
-                // 跳过写一行 skipped=true，与"从未接触"可区分（AC-23）
-                vm.skipLeak()
-                onBack()
-            },
-        )
-
-        VSpace(HrSpacing.xxl)
-    }
-}
-
-@Composable
-private fun RadioRow(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = HrSize.primaryButton)
-            .clip(HrRadius.controlShape)
-            .background(if (selected) HrColor.GoodContainer else HrColor.Surface)
-            .border(1.dp, if (selected) HrColor.Good else HrColor.Line, HrRadius.controlShape)
-            .clickable(role = Role.RadioButton) { onClick() }
-            .testTag(tag)
-            .padding(horizontal = HrSpacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(HrSpacing.xs),
-    ) {
-        Box(
-            Modifier
-                .size(20.dp)
-                .clip(CircleShape)
-                .background(if (selected) HrColor.Good else HrColor.Surface)
-                .border(2.dp, if (selected) HrColor.Good else HrColor.Track, CircleShape),
-        )
-        Text(
-            label,
-            style = if (selected) HrType.bodyMediumBold else HrType.bodyMedium,
-            color = if (selected) HrColor.GoodDeep else HrColor.Slate800,
-        )
-    }
-}
+private val HrWhite = Color(0xFFFFFFFF)
+private val HrCanvas = Color(0xFFF4F6F8)
+private val HrInk = Color(0xFF0F1A24)
+private val HrInkMuted = Color(0xFF64748B)
+private val HrInkTertiary = Color(0xFF94A3B8)
+private val HrLine = Color(0xFFE2E8F0)
+private val HrTrack = Color(0xFFCBD5E1)
+private val HrGood = Color(0xFF047857)
+private val HrWarn = Color(0xFFB45309)
+private val HrWarnContainer = Color(0xFFFEF3C7)
