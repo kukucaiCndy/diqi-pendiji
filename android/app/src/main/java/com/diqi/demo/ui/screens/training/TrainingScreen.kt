@@ -118,9 +118,11 @@ fun TrainingScreen(
     // 1Hz 真实读数历史（SDK 无波形接口）：喂给 WaveCard 画趋势线
     val hrHistory by vm.hrHistory.collectAsState()
     val rrHistory by vm.rrHistory.collectAsState()
-    // 曲线是否可画：窗口建够且当前有可信读数（Valid/Degraded）。
-    // 单看 history.size 不够 —— 遮脸后历史还在，但此刻的读数不可信。
-    val hasWindow = metric is MetricUiState.Valid || metric is MetricUiState.Degraded
+    // 波形门控：只看**窗口是否攒够真实数据**（设计稿 P04-a:326），不能看 metric 状态。
+    // 用 metric（Valid/Degraded）当门控会把「有数据但 SQI<0.50 判 INVALID」误当成
+    // 「还没开始采集」，卡片永远停在「信号建立中」骨架（真机实测症状）。
+    // 数值显示仍由 QualityGate/SQI 门控，两件事不混。
+    val hasWindow by vm.windowReady.collectAsState()
     val textMeasurer = rememberTextMeasurer()
 
     // 真实相机预览（照 CalibrateScreen:89-140 范本）：
@@ -713,7 +715,7 @@ private fun WaveCard(
                     }
                 }
             } else {
-                // 骨架：虚线底 404×1 #E2E8F0 + 「信号建立中」11sp #94A3B8（P04-c）
+                // 骨架：虚线底 404×1 #E2E8F0 +「信号建立中」11sp #94A3B8（P04-c）
                 Canvas(Modifier.fillMaxSize()) {
                     val y = size.height / 2f
                     drawLine(
@@ -726,14 +728,20 @@ private fun WaveCard(
                         ),
                     )
                 }
-                Text(
-                    text = "信号建立中",
-                    fontSize = 11.sp,
-                    color = HrInkTertiary,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 2.dp),
-                )
+                // 文案只在**窗口真未满**时出现：窗口满了之后每秒都会采点
+                // （TrainingViewModel.recordHistory 的采点口径 = 窗口满 + 值非 null，
+                // 不再受 SQI 判定限制），此刻还没画出线只是历史点不足 2 个，
+                // 不能再用「信号建立中」误导用户。
+                if (!hasEnoughWindow) {
+                    Text(
+                        text = "信号建立中",
+                        fontSize = 11.sp,
+                        color = HrInkTertiary,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 2.dp),
+                    )
+                }
             }
         }
     }
@@ -746,7 +754,9 @@ private fun StatusLine(metric: MetricUiState, demo: Boolean) {
         is MetricUiState.NotEnabled -> "未开启感知" to HrInkTertiary
         is MetricUiState.Establishing -> "信号建立中 ${metric.elapsedSec}s / 约 ${metric.totalSec}s" to HrBrand
         is MetricUiState.NoData -> "信号暂失" to HrWarn
-        is MetricUiState.Invalid -> "信号弱，" to HrWarn
+        // SQI 低于门限：数值门控生效（数字显示「--」），这里给出完整的一句「该怎么办」，
+        // 不能只留半句「信号弱，」（旧文案尾逗号后无下文）。
+        is MetricUiState.Invalid -> "信号弱，请调整位置或光线" to HrWarn
         is MetricUiState.Degraded -> "信号一般" to HrWarn
         is MetricUiState.Valid -> null to HrGood
     }

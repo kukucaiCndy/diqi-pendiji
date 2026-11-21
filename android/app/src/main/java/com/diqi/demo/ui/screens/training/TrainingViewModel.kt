@@ -1,5 +1,6 @@
 package com.diqi.demo.ui.screens.training
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.diqi.demo.training.TrainingDeps
@@ -102,6 +103,32 @@ class TrainingViewModel(
     /** 每秒变化的指标区状态。只应被指标区叶子订阅。 */
     private val _metric = MutableStateFlow<MetricUiState>(MetricUiState.NotEnabled)
     val metric: StateFlow<MetricUiState> = _metric.asStateFlow()
+
+    /**
+     * **波形窗口是否已攒够**（1Hz 采样自 SDK 的 `hasEnoughWindow`）。
+     *
+     * ## 为什么（真实路径）不能从 [metric] 推导
+     *
+     * 「窗口攒够了」说的是**有没有真实数据**，「SQI ≥ 0.50」说的是**这批数据可不可信**。
+     * 两者正交：真机实测出现过 SQI 判 INVALID（sqi < 0.50）而窗口早已满、HR 有真实值的
+     * 情形 —— 那时如果用 `metric is Valid || Degraded` 当波形门控，卡片会永远停在
+     * 「信号建立中」骨架，把"有数据只是质量没达标"误报成"还没开始采集"。
+     *
+     * 所以**真实路径的波形门控只认这条流**（= `bridge.hasEnoughWindow`）；
+     * 数值显示仍由 [QualityGate]/SQI 门控（0.50 门限不动）。
+     *
+     * ## 演示路径的「窗口等价信号」
+     *
+     * 演示模式（[rppgAssembly] == null）没有 SDK，压根没有 `hasEnoughWindow` 可问。
+     * 那一侧用**窗口等价信号** = `metric is Valid || Degraded`，即"这一秒已经有
+     * 可信/可展示的指标"≈"数据已攒够能出值"。这样演示模式也会累积 [hrHistory] /
+     * [rrHistory] 并画出曲线，而不是一条空虚线。
+     *
+     * 这条等价只在演示路径成立，且演示数据本身带全屏水印 + 写库标 simulated
+     * （AC-19），不会被当成真实趋势 —— 口径是诚实的，不是给假图开绿灯。
+     */
+    private val _windowReady = MutableStateFlow(false)
+    val windowReady: StateFlow<Boolean> = _windowReady.asStateFlow()
 
     /**
      * 心率 / 呼吸率的 **1Hz 历史**（最多 [HISTORY_MAX] 点，环形截断最旧的）。
@@ -270,9 +297,18 @@ class TrainingViewModel(
         viewModelScope.launch {
             coordinator.frames.collect { frame ->
                 _frames.value = frame
-                val metric = computeMetric()
+                // 快照只取一次：metric（数值门控）与 history（波形采点）吃同一份读数，
+                // 两条口径不会因为各自重新采一次而对不上同一秒的值。
+                val snap = sensor.snapshot(coordinator.elapsedActiveMs().toInt() / 1000)
+                val metric = computeMetric(snap)
+                // 波形窗口门控，与 metric 同一个 1Hz 节拍（必须先算 metric：
+                // 演示路径的"窗口等价信号"就读它）。
+                //  · 真实路径：问 SDK —— bridge.hasEnoughWindow
+                //  · 演示路径：没有 bridge ⇒ 用窗口等价信号（Valid/Degraded 即"数据够出值"）
+                _windowReady.value = rppgAssembly?.bridge?.hasEnoughWindow
+                    ?: (metric is MetricUiState.Valid || metric is MetricUiState.Degraded)
                 _metric.value = metric
-                recordHistory(metric)
+                recordHistory(snap)
                 if (frame.status == TrainingStatus.COMPLETE && savedId == null) {
                     finishSession(frame)
                 }
@@ -283,21 +319,26 @@ class TrainingViewModel(
     /**
      * 把这一秒的读数追加进历史（1Hz 采样，见 [hrHistory] 的说明）。
      *
+     * ## 采点口径：只看窗口满没满，与 SQI 判定解耦
+     *
+     * 设计稿对波形的门控只有一条 —— P04-a:326「波形仅在 hasEnoughWindow 后绘」，
+     * **没有 SQI 条件**。所以这里也只问两件事：窗口攒够了真实数据
+     * （[windowReady] / `bridge.hasEnoughWindow`），且这一路的值不是 null。
+     * hr 非 null 就采 hr，rr 非 null 就采 rr，互不牵连。
+     *
+     * 因此「窗口满但 SQI 低于门限被判 INVALID」的那些秒**照样采点**：
+     * 曲线画的是真实读数趋势，不能因为数值门控而留一段空白。
+     * 「数字能不能显示」是另一件事，仍由 QualityGate/SQI 门控
+     * （[MetricUiState.showsNumbers]，INVALID 时显示「--」，不参与统计）。
+     * 两条口径分开：**波形门控 = 窗口满，数值门控 = SQI**。
+     *
      * 环形上限 [HISTORY_MAX]：超出丢最旧的，内存与绘制量恒定。
      */
-    private fun recordHistory(metric: MetricUiState) {
-        val hr = when (metric) {
-            is MetricUiState.Valid -> metric.heartRateBpm
-            is MetricUiState.Degraded -> metric.heartRateBpm
-            else -> null
-        }
-        val rr = when (metric) {
-            is MetricUiState.Valid -> metric.breathingRatePerMin
-            is MetricUiState.Degraded -> metric.breathingRatePerMin
-            else -> null
-        }
-        if (hr != null) _hrHistory.value = appendBounded(_hrHistory.value, hr)
-        if (rr != null) _rrHistory.value = appendBounded(_rrHistory.value, rr)
+    private fun recordHistory(snap: com.diqi.demo.sensor.SensorSnapshot) {
+        val windowFull = windowReady.value || rppgAssembly?.bridge?.hasEnoughWindow == true
+        if (!windowFull) return
+        snap.heartRateBpm?.let { _hrHistory.value = appendBounded(_hrHistory.value, it) }
+        snap.breathingRatePerMin?.let { _rrHistory.value = appendBounded(_rrHistory.value, it) }
     }
 
     /**
@@ -324,15 +365,31 @@ class TrainingViewModel(
      * 关键：`showNumbers` 为 false 时 UI **不会**渲染任何数字 ——
      * 这条约束由 `MetricUiState` 的类型表达，而不是靠界面记得判断。
      */
-    private fun computeMetric(): MetricUiState {
-        val snap = sensor.snapshot(coordinator.elapsedActiveMs().toInt() / 1000)
-        if (snap.missingReason == MissingReason.NOT_ENABLED) {
-            return MetricUiState.NotEnabled
+    private fun computeMetric(snap: com.diqi.demo.sensor.SensorSnapshot): MetricUiState {
+        val metric = when {
+            snap.missingReason == MissingReason.NOT_ENABLED -> MetricUiState.NotEnabled
+            else -> evaluateMetric(snap)
         }
+        logMetricTrace(snap, metric)
+        return metric
+    }
+
+    /** 快照 → 指标区状态（[computeMetric] 的纯映射部分）。 */
+    private fun evaluateMetric(snap: com.diqi.demo.sensor.SensorSnapshot): MetricUiState {
         // 演示模式缩短信号建立期（DemoSensor.HR_READY_SEC=3），真实源保持 30s
         val hrReadySec = if (demoMode) DemoSensor.HR_READY_SEC else QualityGate.HR_READY_SEC
         // 用数据源真实累计的 faceLostMs（不再拍常量）
-        val verdict = QualityGate.evaluate(snap, hrReadySec = hrReadySec)
+        // SQI 双门限（见 QualityGate 类注释）：
+        //  · 达标门限用临床默认 0.50 —— 不放松，VALID 的门槛不变；
+        //  · 显示下限用 [BETA_SQI_DISPLAY_FLOOR] = 0.30（beta 演示标定，用户裁决），
+        //    于是真实链路上 SQI 落在 0.30–0.50 时给数字但标「估算值仅供参考」。
+        // 演示路径同样走这里（DemoSensor SQI=0.82 本就 ≥ 0.50，行为不变）。
+        val verdict = QualityGate.evaluate(
+            snap,
+            hrReadySec = hrReadySec,
+            sqiThreshold = QualityGate.DEFAULT_SQI_THRESHOLD,
+            sqiDisplayFloor = BETA_SQI_DISPLAY_FLOOR,
+        )
         return when (verdict.state) {
             com.diqi.demo.data.db.QualityState.VALID -> MetricUiState.Valid(
                 heartRateBpm = snap.heartRateBpm,
@@ -354,6 +411,27 @@ class TrainingViewModel(
                     MetricUiState.NoData(verdict.reason, verdict.banner)
                 }
         }
+    }
+
+    /**
+     * 1Hz 诊断日志（真机排障用，保留为 debug 日志）。
+     *
+     * 用来区分三种「卡在信号建立中」的根因：
+     *  ① 门控 bug —— window=true 但界面仍画骨架；
+     *  ② 信号弱   —— window=true、sqi < 0.50（窗口有真实数据但质量不达标）；
+     *  ③ 没投喂   —— window=false 且 elapsed 在增长（analyzer→bridge.feed 断了）。
+     *
+     * 抓法：`adb logcat -c && adb logcat -s MetricTrace RppgEngineImpl`。
+     */
+    private fun logMetricTrace(snap: com.diqi.demo.sensor.SensorSnapshot, metric: MetricUiState) {
+        val bridge = rppgAssembly?.bridge
+        Log.d(
+            "MetricTrace",
+            "state=${snap.state} hr=${snap.heartRateBpm} rr=${snap.breathingRatePerMin}" +
+                " sqi=${snap.sqi} elapsed=${snap.elapsedSec} faceLost=${snap.faceLostMs}" +
+                " lightOk=${snap.lightOk} window=${bridge?.hasEnoughWindow}" +
+                " bridgeState=${bridge?.state} ui=${metric::class.simpleName}",
+        )
     }
 
     // ── 交互 ──────────────────────────────────────────────────────────────
@@ -496,6 +574,19 @@ class TrainingViewModel(
 
         /** 波形历史上限：60 点 × 1Hz ≈ 1 分钟，够画满卡片宽度。 */
         const val HISTORY_MAX = 60
+
+        /**
+         * SQI **显示下限**（不是达标门限）。
+         *
+         * 用户裁决 2026-11-21：beta 演示/联调阶段标定 **0.30** —— 端侧 rPPG 在正常
+         * 室内光下实测 SQI 常落在 0.3–0.5，沿用 0.50 单门限会让界面长期停在「信号弱」
+         * 而不出数字，演示与联调都看不出链路是否真的在出值。中间带给数字，但常驻
+         * 「信号一般，估算值仅供参考」，且不判 VALID、不进可信统计。
+         *
+         * 正式发版：临床签字后改回 [QualityGate.DEFAULT_SQI_THRESHOLD]（0.50），
+         * 即 floor == threshold，中间带消失，回到严格单门限口径。
+         */
+        const val BETA_SQI_DISPLAY_FLOOR = 0.30f
 
         /** 环形追加：超出上限丢最旧的。纯函数，便于单测。 */
         internal fun appendBounded(history: List<Float>, value: Float): List<Float> =

@@ -111,6 +111,54 @@ class QualityGateTest {
         assertEquals(QualityState.VALID, v.state)
     }
 
+    // ── 双门限：显示下限（beta 标定 0.30）与达标门限（0.50）分开 ──────────
+
+    /** beta 标定口径：floor = 0.30，threshold 仍是临床默认 0.50 */
+    private fun betaVerdict(sqi: Float?) = QualityGate.evaluate(
+        snap(sqi = sqi),
+        sqiThreshold = QualityGate.DEFAULT_SQI_THRESHOLD,
+        sqiDisplayFloor = 0.30f,
+    )
+
+    @Test
+    fun 双门限_中间带给数字并标注仅供参考() {
+        val v = betaVerdict(0.4f)
+        assertEquals("0.30 ≤ sqi < 0.50 应判 DEGRADED", QualityState.DEGRADED, v.state)
+        assertTrue("中间带必须给数字（否则演示/联调永远看不到值）", v.showNumbers)
+        assertEquals("信号一般，估算值仅供参考", v.banner)
+        assertEquals(MissingReason.NONE, v.reason)
+    }
+
+    @Test
+    fun 双门限_恰好等于显示下限算进中间带() {
+        // floor 是闭区间下界：sqi == 0.30 不再是 INVALID
+        val v = betaVerdict(0.30f)
+        assertEquals(QualityState.DEGRADED, v.state)
+        assertTrue(v.showNumbers)
+    }
+
+    @Test
+    fun 双门限_低于显示下限仍然_INVALID_且不出数字() {
+        val v = betaVerdict(0.2f)
+        assertEquals("低于 floor 连估算值都不给", QualityState.INVALID, v.state)
+        assertFalse(v.showNumbers)
+    }
+
+    @Test
+    fun 双门限_达到达标门限才是_VALID() {
+        val v = betaVerdict(0.6f)
+        assertEquals("≥ 0.50 才算达标", QualityState.VALID, v.state)
+        assertTrue(v.showNumbers)
+    }
+
+    @Test
+    fun 双门限_默认_floor_等于门限时中间带不存在() {
+        // 不传 sqiDisplayFloor ⇒ floor == threshold ⇒ 与旧行为一致：0.4 直接 INVALID
+        val v = QualityGate.evaluate(snap(sqi = 0.4f))
+        assertEquals(QualityState.INVALID, v.state)
+        assertFalse(v.showNumbers)
+    }
+
     @Test
     fun 光照不足降为_DEGRADED_但仍显示可靠项() {
         val v = QualityGate.evaluate(snap(), lightOk = false)
