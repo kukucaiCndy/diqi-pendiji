@@ -349,7 +349,17 @@ class TrainingViewModel(
      * AC-16 遮脸 3s→NO_DATA 自然成立：faceLostMs 经 RppgSensor 传到 SensorSnapshot，
      * QualityGate 据此判 FACE_LOST_NO_DATA_MS。
      */
+    /**
+     * 最近一帧的人脸占画面比（[FaceFrame.faceRatio]），只用于 MetricTrace 日志。
+     *
+     * 真机标定时要能把「距离（faceRatio）」和「质量（SQI）」对到同一秒上，
+     * 否则收紧距离门限就成了拍脑袋（问题 1）。
+     */
+    @Volatile
+    private var lastFaceRatio: Float = 0f
+
     private fun onFaceFrame(frame: FaceFrame) {
+        lastFaceRatio = frame.faceRatio
         val rppg = rppgAssembly?.sensor
         val lightOk = frame.brightness >= MIN_BRIGHTNESS
         if (rppg != null) {
@@ -389,6 +399,13 @@ class TrainingViewModel(
             hrReadySec = hrReadySec,
             sqiThreshold = QualityGate.DEFAULT_SQI_THRESHOLD,
             sqiDisplayFloor = BETA_SQI_DISPLAY_FLOOR,
+            // **beta 演示取向：数值与曲线同门控**（问题 3）。
+            // 曲线只认窗口（`hasEnoughWindow`），数值若还额外要求 SQI ≥ 0.30，
+            // SQI 在门限附近抖动时就会数字闪断、曲线却连续 —— 两条口径必须统一。
+            // 所以这里传 false：SQI 不再隐藏数字，只决定质量标签是哪一档
+            // （≥0.50 正常 / 0.30–0.50「一般」/ <0.30「弱」），showNumbers 恒 true。
+            // **临床发版改回 true**（默认值），恢复"低 SQI 隐藏数字"的严格口径。
+            hideBelowFloor = false,
         )
         return when (verdict.state) {
             com.diqi.demo.data.db.QualityState.VALID -> MetricUiState.Valid(
@@ -404,12 +421,17 @@ class TrainingViewModel(
                 banner = verdict.banner,
             )
             com.diqi.demo.data.db.QualityState.INVALID -> MetricUiState.Invalid(snap.sqi)
-            com.diqi.demo.data.db.QualityState.NO_DATA ->
-                if (snap.elapsedSec < hrReadySec) {
-                    MetricUiState.Establishing(snap.elapsedSec, hrReadySec)
-                } else {
-                    MetricUiState.NoData(verdict.reason, verdict.banner)
-                }
+            com.diqi.demo.data.db.QualityState.NO_DATA -> when {
+                // 窗口地面真相优先：窗口满却 NO_DATA，说明是别的原因（离框 / 无值），
+                // 不能再报"信号建立中"——校准已攒满窗口就进训练时，会话秒数只有个位数，
+                // 旧代理会把「看不到脸了」误报成「建立中 5s / 30s」。
+                snap.windowReady == true -> MetricUiState.NoData(verdict.reason, verdict.banner)
+                // 窗口未满 ⇒ 确实在建立（哪怕会话已跑过 30 秒）
+                snap.windowReady == false -> MetricUiState.Establishing(snap.elapsedSec, hrReadySec)
+                // null（Null/Demo 源）：沿用 elapsedSec 旧代理
+                snap.elapsedSec < hrReadySec -> MetricUiState.Establishing(snap.elapsedSec, hrReadySec)
+                else -> MetricUiState.NoData(verdict.reason, verdict.banner)
+            }
         }
     }
 
@@ -429,7 +451,9 @@ class TrainingViewModel(
             "MetricTrace",
             "state=${snap.state} hr=${snap.heartRateBpm} rr=${snap.breathingRatePerMin}" +
                 " sqi=${snap.sqi} elapsed=${snap.elapsedSec} faceLost=${snap.faceLostMs}" +
+                " faceRatio=${"%.3f".format(lastFaceRatio)}" +
                 " lightOk=${snap.lightOk} window=${bridge?.hasEnoughWindow}" +
+                " windowSnap=${snap.windowReady}" +
                 " bridgeState=${bridge?.state} ui=${metric::class.simpleName}",
         )
     }
@@ -505,9 +529,14 @@ class TrainingViewModel(
      * 与容器销毁时。
      */
     fun onClearedComposition() {
-        // 页面离开时停投喂（需求 §5.3：页面销毁 release()）。
+        // 页面离开时停掉帧分析（需求 §5.3：页面销毁 release 相机链路）。
         // 会话本身是 app 级的，不在这里释放。
-        runCatching { sensor.release() }
+        //
+        // **刻意不调 sensor.release()**：真实路径的 sensor/bridge 是
+        // `AppContainer` 的**进程级共享实例**（校准页攒的窗口就在里面）。
+        // 页面一释放，SDK 引擎窗口被清空，下次进训练又要重攒约 30 秒 ——
+        // 那正是问题 2 要修的症状。相机链路一停，就没有帧再投喂，
+        // 引擎侧自然空转（-16 超时由 RealRppgEngine 自动重连兜底）。
         // analyzer 是 lazy：仅在已初始化时才 release（避免强制初始化 ML Kit）
         if (analyzerLazy.isInitialized()) runCatching { analyzer.release() }
     }

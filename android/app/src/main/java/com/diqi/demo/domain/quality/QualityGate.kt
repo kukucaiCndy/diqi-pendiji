@@ -20,7 +20,23 @@ import com.diqi.demo.sensor.SensorSnapshot
  *
  * 1. **人脸丢失 < 3s**：指标半透明 + 轻提示，**不切换状态**
  * 2. **光照不足**：顶部提示条，质量降为 DEGRADED
- * 3. **前 30 秒**：只显示「信号建立中」，不显示任何数字（AC-15）
+ * 3. **建立期认窗口地面真相**：`snapshot.windowReady != null` 时"建立中"= `!windowReady`；
+ *    `null`（Null/Demo 源）才回落到「前 30 秒」的 `elapsedSec` 旧代理
+ *
+ * ## 数值与曲线同门控（beta 演示取向）
+ *
+ * 曲线的门控是"窗口满"（`hasEnoughWindow`），数值的门控若还额外要求 SQI ≥ floor，
+ * 两条口径就会打架：SQI 在 0.30 附近抖动时数字闪断，曲线却一直在画。
+ *
+ * `hideBelowFloor = false`（训练页 beta 用）把数值门控也统一到窗口上：
+ *
+ * | SQI | 判定 | 界面 |
+ * |---|---|---|
+ * | `≥ sqiThreshold` | VALID | 正常显示 |
+ * | `[floor, threshold)` | DEGRADED | 显示估值 + 「信号一般，估算值仅供参考」 |
+ * | `< floor` | DEGRADED | 显示估值 + 「信号弱，估算值仅供参考」 |
+ *
+ * 临床口径仍由默认值 `hideBelowFloor = true` 守住（低 SQI 一律 INVALID 隐藏数字）。
  *
  * ## 双门限（SQI 显示下限 / 达标门限）
  *
@@ -83,6 +99,9 @@ object QualityGate {
      * @param hrReadySec 心率可用的最短时长（默认 30，演示模式可传更短值）
      * @param sqiDisplayFloor **显示下限**：SQI 低于它连数字都不给看（INVALID）。
      * 默认等于 [sqiThreshold]（中间带为空 = 旧行为）；见下方「双门限」说明。
+     * @param hideBelowFloor SQI 低于 [sqiDisplayFloor] 时是否**隐藏数字**。
+     * 默认 `true` = 临床口径（旧行为，既有测试逐条不变）。
+     * 传 `false` 时改为「显示真实估值 + 质量标签」，见下方「数值与曲线同门控」。
      */
     fun evaluate(
         snapshot: SensorSnapshot,
@@ -91,6 +110,7 @@ object QualityGate {
         sqiThreshold: Float = DEFAULT_SQI_THRESHOLD,
         hrReadySec: Int = HR_READY_SEC,
         sqiDisplayFloor: Float = sqiThreshold,
+        hideBelowFloor: Boolean = true,
     ): Verdict {
         // 1) 未启用感知 —— 整块不显示
         if (snapshot.missingReason == MissingReason.NOT_ENABLED) {
@@ -101,8 +121,19 @@ object QualityGate {
             )
         }
 
-        // 2) 前 hrReadySec 秒：信号建立中，一个数字都不许出（AC-15）
-        if (snapshot.elapsedSec < hrReadySec) {
+        // 2) 信号建立中：优先认数据源给的**窗口地面真相**（windowReady）
+        //
+        //    snapshot.windowReady != null（真实 SDK 源）→ 建立中 = !windowReady，
+        //    与"这场活动跑了多少秒"彻底解耦：校准页已攒满窗口时，训练页第 1 秒
+        //    windowReady 就是 true，不必再空等 30 秒（问题 2 的第二层根因）。
+        //
+        //    windowReady == null（NullSensor / DemoSensor）→ 沿用 elapsedSec 旧代理，
+        //    既有 18+ 项断言与演示路径的 3s 建立期行为逐字节不变。
+        val establishing = when (val window = snapshot.windowReady) {
+            null -> snapshot.elapsedSec < hrReadySec
+            else -> !window
+        }
+        if (establishing) {
             return Verdict(
                 state = QualityState.NO_DATA,
                 showNumbers = false,
@@ -123,8 +154,12 @@ object QualityGate {
         // 4) SQI 低于**显示下限**：有数据但不可信 → INVALID，显示「--」
         //    注意用的是 sqiDisplayFloor 而不是 sqiThreshold —— 两者之间的中间带
         //    是 DEGRADED（见第 6 条）。默认 floor == threshold 时不产生中间带。
+        //
+        //    hideBelowFloor=false（beta 演示取向）：**不再隐藏**，落到第 5/6 条
+        //    —— 有真实估值就给出来，只把质量标签换成「信号弱」。这样数值的门控
+        //    与曲线完全一致（都只认窗口），SQI 抖动不再造成数字闪断（问题 3）。
         val sqi = snapshot.sqi
-        if (sqi != null && sqi < sqiDisplayFloor) {
+        if (hideBelowFloor && sqi != null && sqi < sqiDisplayFloor) {
             return Verdict(
                 state = QualityState.INVALID,
                 showNumbers = false,
@@ -141,15 +176,22 @@ object QualityGate {
             )
         }
 
-        // 6) 中间带：floor ≤ sqi < threshold → DEGRADED，**给数字**但标明仅供参考
+        // 6) 未达标带：sqi < threshold → DEGRADED，**给数字**但标明仅供参考
         //    放在"无有效数值"之后：真的什么都没有时仍然是 NO_DATA，不能靠降级
         //    状态去掩盖「没采到值」。
+        //    文案按 SQI 再分两带（hideBelowFloor=false 时低位带可达）：
+        //      · floor ≤ sqi < threshold → 「信号一般」
+        //      · sqi < floor             → 「信号弱」（更弱但照样给估值）
         if (sqi != null && sqi < sqiThreshold) {
             return Verdict(
                 state = QualityState.DEGRADED,
                 showNumbers = true,
                 reason = MissingReason.NONE,
-                banner = "信号一般，估算值仅供参考",
+                banner = if (sqi < sqiDisplayFloor) {
+                    "信号弱，估算值仅供参考"
+                } else {
+                    "信号一般，估算值仅供参考"
+                },
             )
         }
 

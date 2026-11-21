@@ -168,6 +168,86 @@ class QualityGateTest {
         assertTrue("应给出光照提示", v.banner != null)
     }
 
+    // ── 建立期认窗口地面真相（windowReady）────────────────────────────────
+
+    /** windowReady 语义：true=窗口已满 / false=建立中 / null=没有 SDK 窗口（旧代理）*/
+    private fun windowVerdict(windowReady: Boolean?, elapsedSec: Int) =
+        QualityGate.evaluate(snap(elapsedSec = elapsedSec).copy(windowReady = windowReady))
+
+    @Test
+    fun 窗口已满时即使会话只有几秒也立刻出数() {
+        // 校准页已攒满窗口 → 训练页第 2 秒就该出数，不再空等 30s（问题 2）
+        val v = windowVerdict(windowReady = true, elapsedSec = 2)
+        assertEquals(QualityState.VALID, v.state)
+        assertTrue("窗口已满就必须给数字", v.showNumbers)
+    }
+
+    @Test
+    fun 窗口未满时即使会话跑过三十秒仍判建立中() {
+        val v = windowVerdict(windowReady = false, elapsedSec = 60)
+        assertEquals(QualityState.NO_DATA, v.state)
+        assertFalse("窗口没攒够，跑再久也不出数字", v.showNumbers)
+        assertEquals(MissingReason.NONE, v.reason)
+    }
+
+    @Test
+    fun windowReady_为空时沿用_elapsedSec_旧代理() {
+        // Null/Demo 源没有 SDK 窗口：行为必须与首版一致
+        assertFalse(windowVerdict(windowReady = null, elapsedSec = 0).showNumbers)
+        assertFalse(windowVerdict(windowReady = null, elapsedSec = 29).showNumbers)
+        assertTrue(windowVerdict(windowReady = null, elapsedSec = 30).showNumbers)
+    }
+
+    // ── 数值与曲线同门控（hideBelowFloor = false，beta 演示取向）───────────
+
+    /** hideBelowFloor=false：SQI 不再隐藏数字，只决定质量标签 */
+    private fun sameGateVerdict(sqi: Float?, hr: Float? = 72f) = QualityGate.evaluate(
+        snap(sqi = sqi, hr = hr),
+        sqiThreshold = QualityGate.DEFAULT_SQI_THRESHOLD,
+        sqiDisplayFloor = 0.30f,
+        hideBelowFloor = false,
+    )
+
+    @Test
+    fun 同门控_达到达标门限仍是_VALID_正常显示() {
+        val v = sameGateVerdict(0.6f)
+        assertEquals(QualityState.VALID, v.state)
+        assertTrue(v.showNumbers)
+        assertNull("VALID 不应带质量横幅", v.banner)
+    }
+
+    @Test
+    fun 同门控_中间带给估值并标信号一般() {
+        val v = sameGateVerdict(0.4f)
+        assertEquals(QualityState.DEGRADED, v.state)
+        assertTrue("中间带必须给数字", v.showNumbers)
+        assertEquals("信号一般，估算值仅供参考", v.banner)
+    }
+
+    @Test
+    fun 同门控_低于显示下限也给估值_只把标签换成信号弱() {
+        // 旧行为这里是 INVALID + 隐藏数字（数字闪断的根因）；同门控下改为 DEGRADED 给值
+        val v = sameGateVerdict(0.2f)
+        assertEquals("低 SQI 不再判 INVALID", QualityState.DEGRADED, v.state)
+        assertTrue("SQI 抖动不得让数字消失", v.showNumbers)
+        assertEquals("信号弱，估算值仅供参考", v.banner)
+        // 兜底：低 SQI 但没有估值时仍是 NO_DATA，不能靠"降级"掩盖"没采到值"
+        val noValues = sameGateVerdict(0.2f, hr = null)
+        assertEquals(QualityState.NO_DATA, noValues.state)
+        assertFalse(noValues.showNumbers)
+    }
+
+    @Test
+    fun 默认口径仍隐藏低于显示下限的数字() {
+        // 不传 hideBelowFloor ⇒ true ⇒ 临床行为不变
+        val v = QualityGate.evaluate(
+            snap(sqi = 0.2f),
+            sqiDisplayFloor = 0.30f,
+        )
+        assertEquals(QualityState.INVALID, v.state)
+        assertFalse(v.showNumbers)
+    }
+
     @Test
     fun 完全无数值时为_NO_DATA_而不是_INVALID() {
         // INVALID 意味着"有数据但不可信"；完全没数据应落 NO_DATA
