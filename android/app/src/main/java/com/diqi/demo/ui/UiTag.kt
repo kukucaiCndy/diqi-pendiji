@@ -21,6 +21,9 @@ object UiTag {
     const val P01_ROOT = "p01.root"
     const val P01_PRIMARY_BUTTON = "p01.primary_button"
     const val P01_PRIVACY_CARD = "p01.privacy_card"
+
+    /** P01-a 主标题（设计稿 37sp 三行文案） */
+    const val P01_TITLE = "p01.title"
     const val P01_SCREENING_ROOT = "p01.screening_root"
     const val P01_SCREENING_PROGRESS = "p01.screening_progress"
     const val P01_SCREENING_QUESTION = "p01.screening_question"

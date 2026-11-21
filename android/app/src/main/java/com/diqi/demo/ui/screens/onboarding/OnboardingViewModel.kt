@@ -116,8 +116,9 @@ class OnboardingViewModel(private val container: AppContainer) : ViewModel() {
         val QUESTIONS: List<ScreeningQuestion> = listOf(
             ScreeningQuestion(
                 index = 0,
-                title = "是否接受过盆底肌训练的专业指导？",
-                hint = "记得不清楚也没关系，可以选不确定。",
+                // 题干与辅助文案取自设计稿 P01-b 原文
+                title = "是否有医生或专业治疗师指导过你做过盆底训练？",
+                hint = "这会影响我们给你的建议强度，可以如实回答。",
                 options = listOf(
                     ScreeningAnswer.YES to "是，有专业指导",
                     ScreeningAnswer.NO to "否，没有指导过",
