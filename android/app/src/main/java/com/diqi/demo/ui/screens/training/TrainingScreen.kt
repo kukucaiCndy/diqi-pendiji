@@ -267,7 +267,10 @@ fun TrainingScreen(
             title = { Text("上次的训练还没做完", style = HrType.titleSmall, color = HrInk) },
             text = {
                 Text(
-                    "你已经完成 ${snap.completedRepsIfAny()}，要继续吗？",
+                    // EngineSnapshot 里没有"已完成次数"（只有累计活动时长），
+                    // 所以这里说用时而不是次数 —— 设计稿 M03 原本写的是次数，
+                    // 但我们不能拿时长去折算次数（那是编造数据）。
+                    "你上次练了 ${secText(snap.elapsedActiveMs)}，要继续吗？",
                     style = HrType.bodyMedium,
                     color = HrInkSecondary,
                 )
@@ -655,8 +658,6 @@ private fun MetricUiState.breathingRateOrNull(): String = when (this) {
     is MetricUiState.Degraded -> breathingRatePerMin?.let { it.toInt().toString() } ?: "--"
     else -> "--"
 }
-
-private fun Any?.completedRepsIfAny(): String = "数"
 
 private val PHASE_STEPS = listOf("准备", "收缩", "保持", "放松")
 
