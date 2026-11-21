@@ -326,8 +326,9 @@ private fun WeekCard(state: HomeUiState) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             WEEK_LABELS.forEachIndexed { i, label ->
-                val iso = i + 1
-                val done = state.trainedWeekdays.contains(iso)
+                // state.trainedWeekdays 是 0-based（0 = 周一，见 HomeUiState 注释），
+                // 首版这里误用 i + 1，导致"今天练过"也显示 0 / 7 天。
+                val done = state.trainedWeekdays.contains(i)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),

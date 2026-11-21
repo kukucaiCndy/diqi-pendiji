@@ -99,7 +99,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 trainedWeekdays = weekdays,
                 weekSessionCount = week.sessionCount,
                 weekTotalSec = week.totalSec,
-                lastTrainingText = lastTrainingText(last?.startedAt),
+                lastTrainingText = lastTrainingText(last?.startedAt, last?.durationSec),
                 // P02-b 数据行：8 次　·　3 分 12 秒[　·　平均心率 71]
                 // 心率段只在覆盖率达标时存在（数据层已把不达标的 avgHr 置空），
                 // 所以这里的拼接天然满足 FR-09，不会出现"覆盖率不足还显示心率"。
@@ -139,14 +139,22 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private fun lastTrainingText(lastStartedAt: Long?): String {
+    /**
+     * 「上次训练：昨天 · 3 分钟」——格式取自设计稿 P02-a 的末行。
+     *
+     * 首版只输出「上次训练：今天」，丢了时长；设计稿带时长，且时长对用户有信息量
+     * （能判断上次练了多久）。
+     */
+    private fun lastTrainingText(lastStartedAt: Long?, durationSec: Long?): String {
         if (lastStartedAt == null) return "还没有训练记录"
         val date = Instant.ofEpochMilli(lastStartedAt).atZone(zone).toLocalDate()
         val today = LocalDate.now(zone)
-        return when (date) {
-            today -> "上次训练：今天"
-            today.minusDays(1) -> "上次训练：昨天"
-            else -> "上次训练：" + date.format(DateTimeFormatter.ofPattern("M 月 d 日"))
+        val whenText = when (date) {
+            today -> "今天"
+            today.minusDays(1) -> "昨天"
+            else -> date.format(DateTimeFormatter.ofPattern("M 月 d 日"))
         }
+        val durText = durationSec?.takeIf { it > 0 }?.let { formatMinutes(it) }
+        return if (durText != null) "上次训练：$whenText · $durText" else "上次训练：$whenText"
     }
 }
