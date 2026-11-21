@@ -1,5 +1,6 @@
 package com.diqi.demo.ui.screens.training
 
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -27,9 +28,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +45,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -55,9 +59,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.diqi.demo.domain.training.TrainingFrame
 import com.diqi.demo.domain.training.TrainingPhase
 import com.diqi.demo.domain.training.TrainingStatus
+import com.diqi.demo.sensor.camera.CameraController
+import com.diqi.demo.sensor.camera.fillParent
 import com.diqi.demo.ui.UiTag
 import com.diqi.demo.ui.components.HrBottomSheetDialog
 import com.diqi.demo.ui.components.HrCenterDialog
@@ -95,8 +103,9 @@ fun TrainingScreen(
      * 本次训练是否启用摄像头。
      *
      * 用户在「训练」Tab 上做的选择，通过路由参数传进来。
-     * 注意：**FacePhys SDK 尚未接入**，所以即使 cameraEnabled=true，
-     * 指标区仍会如实显示「未开启感知」—— 不因为"开了摄像头"就假装有数据。
+     * cameraEnabled=true 且 BuildConfig.FACEPHYS_APP_KEY 非空时，
+     * 训练页渲染真实相机预览 + RppgSensor 真实指标；
+     * 否则如实显示「未开启感知」—— 不因为"开了摄像头"就假装有数据。
      */
     cameraEnabled: Boolean = false,
 ) {
@@ -105,6 +114,41 @@ fun TrainingScreen(
     val frame by vm.frames.collectAsState()
     val metric by vm.metric.collectAsState()
     val textMeasurer = rememberTextMeasurer()
+
+    // 真实相机预览（照 CalibrateScreen:89-140 范本）：
+    // isRealSensor 时渲染 PreviewView + CameraController，否则维持现有占位渲染。
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    val isReal = meta.isRealSensor
+    // remember(isReal) 必须带 key：isReal 来自 VM 异步 init，首帧 false。
+    // 无 key 时首帧把 previewView 记为 null 并永久沿用 → 相机训练无预览。
+    val previewView = remember(isReal) {
+        if (isReal) {
+            PreviewView(context).apply {
+                fillParent()
+                scaleType = PreviewView.ScaleType.FILL_CENTER
+            }
+        } else null
+    }
+    val camera = remember(isReal) {
+        if (isReal) CameraController(context, lifecycleOwner, vm.analyzer) else null
+    }
+    DisposableEffect(isReal) {
+        val cam = camera
+        val pv = previewView
+        if (cam != null && pv != null) {
+            cam.start(pv)
+        }
+        onDispose {
+            cam?.release()
+        }
+    }
+
+    // 首次检测到人脸时锁定 AE/AWB（AWB 已对当前场景收敛，锁定而非禁用）
+    LaunchedEffect(meta.isRealSensor, meta.faceFound) {
+        if (meta.isRealSensor && meta.faceFound) camera?.lockAeAwb()
+    }
 
     LaunchedEffect(meta.finished) {
         if (meta.finished) onFinished(meta.savedSessionId)
@@ -122,7 +166,13 @@ fun TrainingScreen(
     ) {
         // 视频区固定 240：设计稿画布 880，本机 827dp，若照搬 300 会把底部按钮挤出屏幕。
         // 取 240 后「时间轴 + 阶段头 + 双卡 + 免责 + 按钮」全部可见。
-        VideoArea(ready = metric !is MetricUiState.NotEnabled, height = 240.dp)
+        VideoArea(
+            ready = metric !is MetricUiState.NotEnabled,
+            height = 240.dp,
+            isRealSensor = isReal,
+            previewView = previewView,
+            cameraError = camera?.lastError,
+        )
 
         PhaseTimelineBar(frame = frame)
 
@@ -362,13 +412,29 @@ fun TrainingScreen(
 // ── 视频区（h300，#1B2A38）─────────────────────────────────────────────
 
 @Composable
-private fun VideoArea(ready: Boolean, height: androidx.compose.ui.unit.Dp) {
+private fun VideoArea(
+    ready: Boolean,
+    height: androidx.compose.ui.unit.Dp,
+    isRealSensor: Boolean = false,
+    previewView: PreviewView? = null,
+    cameraError: String? = null,
+) {
     Box(
         Modifier
             .fillMaxWidth()
             .height(height)
             .background(HrVideoBg),
     ) {
+        // 真实相机预览（照 CalibrateScreen:89-140 范本）
+        if (isRealSensor && previewView != null) {
+            AndroidView(
+                factory = { previewView },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag(UiTag.P04_PREVIEW),
+            )
+        }
+
         // 底部渐变（#0F1A2400 → #0F1A24E6，180°）
         Box(
             Modifier
@@ -380,11 +446,20 @@ private fun VideoArea(ready: Boolean, height: androidx.compose.ui.unit.Dp) {
                 ),
         )
 
-        if (!ready) {
+        if (!isRealSensor && !ready) {
             Text(
                 text = "未开启摄像头\n不影响练习",
                 fontSize = 13.sp,
                 color = Color(0xFF8FA3B8),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        } else if (isRealSensor && cameraError != null) {
+            // 相机错误文案（照校准页 cameraError 处理）
+            Text(
+                text = cameraError,
+                fontSize = 13.sp,
+                color = Color(0xFFFBBF24),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.align(Alignment.Center),
             )
@@ -418,17 +493,17 @@ private fun VideoArea(ready: Boolean, height: androidx.compose.ui.unit.Dp) {
                 Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(if (ready) HrAccent else Color(0xFF5E7386)),
+                    .background(if (ready || isRealSensor) HrAccent else Color(0xFF5E7386)),
             )
             Text(
-                text = if (ready) "摄像头工作中" else "未开启摄像头",
+                text = if (isRealSensor) "摄像头工作中" else if (ready) "摄像头工作中" else "未开启摄像头",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = HrWhite,
             )
         }
 
-        if (ready) {
+        if (ready || isRealSensor) {
             Text(
                 text = "已对准　肩颈放松",
                 fontSize = 12.sp,
