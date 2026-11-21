@@ -8,6 +8,12 @@
     <!-- 仅用于 FacePhys SDK 首次激活与 License 校验；训练本身完全离线（AC-03） -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      ACCESS_NETWORK_STATE 由 rppg-sdk-v1.5.0.aar 的 AndroidManifest 声明，
+      AAR 合并时自动并入本 manifest（仅用于 SDK 授权激活前的网络状态探测）。
+      本应用自身代码不直接使用此权限 —— 静态审计须能解释这条合并链路（需求 §7）。
+    -->
+
     <!-- 训练中常驻通知（前台服务）与本地提醒 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

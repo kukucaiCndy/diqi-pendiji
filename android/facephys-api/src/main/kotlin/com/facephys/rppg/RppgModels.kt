@@ -15,6 +15,12 @@ enum class InitErrorCode {
     QUOTA_EXCEEDED,
     /** 模型资源缺失或损坏 */
     MODEL_MISSING,
+    /** 会话超时（SDK -16：单次会话超过上限，默认 5 分钟）*/
+    SESSION_TIMEOUT,
+    /** 设备授权状态受限（SDK -17）*/
+    BANNED,
+    /** 检测到系统时钟回拨（SDK -18）*/
+    CLOCK_ROLLBACK,
     /** 未知错误，必须兜底，避免崩溃 */
     UNKNOWN,
 }

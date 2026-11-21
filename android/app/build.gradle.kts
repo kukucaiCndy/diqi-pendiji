@@ -10,6 +10,8 @@ plugins {
 // AppKey 来源：local.properties（已在 .gitignore，不进 Git）→ 注入 BuildConfig。
 // 生产环境应改为服务端下发。缺省为空串，缺失时不阻断构建（这样 AAC/NullSensor
 // 路径始终可构建、可跑通）。
+// ⚠️ beta 期：AppKey 通过 BuildConfig 注入（local.properties），控制台「建议服务端下发」，
+//    正式上线前必须切换为服务端动态拉取（偏离已记录）。
 val facePhysAppKey: String = run {
     val props = Properties()
     val f = rootProject.file("local.properties")
@@ -85,6 +87,10 @@ android {
         // adaptive-icon 资源（实测报 resource not found），所以这条告警只能抑制。
         // 其余未处理的只有 GradleDependency（版本是刻意锁定的基线）。
         disable += "ObsoleteSdkInt"
+        // Camera2Interop 的 @ExperimentalCamera2Interop 是 Java 注解（非 Kotlin @RequiresOptIn），
+        // Kotlin @OptIn 无法满足 lint 的 UnsafeOptInUsageError 检查（已知互操作问题）。
+        // Camera2Interop 调用已用 runCatching 包裹，设备不支持时安全降级。
+        disable += "UnsafeOptInUsageError"
         warningsAsErrors = false
         abortOnError = true
     }

@@ -17,6 +17,11 @@ dependencyResolutionManagement {
         maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
+        // 真实 rPPG SDK AAR 本地仓库（AGP 不允许 library module 用 files() 引用本地 .aar，
+        // flatDir 方式让 AAR 作为普通依赖引入，避免 lint bundle 报错）
+        flatDir {
+            dirs("${rootProject.projectDir}/facephys-api/libs")
+        }
     }
 }
 
