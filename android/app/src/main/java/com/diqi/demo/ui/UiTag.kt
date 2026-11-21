@@ -70,6 +70,8 @@ object UiTag {
     const val P03_DIAG_LICENSE = "p03.diag.license"
     const val P03_DIAG_SQI = "p03.diag.sqi"
     const val P03_FAILURE_REASON = "p03.failure_reason"
+    const val P03_FACE_VEIL = "p03.face_veil"
+    const val P03_HINT_REASON = "p03.hint_reason"
 
     // ── 训练中 P04 ────────────────────────────────────────────────────────
     const val P04_ROOT = "p04.root"
@@ -80,6 +82,8 @@ object UiTag {
 
     /** P04-a 视频区的人脸框（设计稿 184×228 r96）*/
     const val P04_FACE_BOX = "p04.face_box"
+    /** P04-a 真实相机预览（isRealSensor 时渲染）*/
+    const val P04_PREVIEW = "p04.preview"
     const val P04_PHASE_NAME = "p04.phase_name"
     const val P04_COUNTDOWN = "p04.countdown"
     const val P04_RHYTHM_RING = "p04.rhythm_ring"
