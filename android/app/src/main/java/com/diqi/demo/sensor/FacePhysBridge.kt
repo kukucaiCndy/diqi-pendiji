@@ -8,7 +8,6 @@ import com.facephys.rppg.MetricsRead
 import com.facephys.rppg.RppgConfig
 import com.facephys.rppg.RppgEngine
 import com.facephys.rppg.SdkDiagnostics
-import com.facephys.rppg.StubRppgEngine
 import java.io.IOException
 
 /**
@@ -150,7 +149,15 @@ class FacePhysBridge(
         refreshDiagnostics(initialized = false)
     }
 
-    fun diagnostics(): SdkDiagnostics = lastDiagnostics
+    /**
+     * 每次调用都从 engine 重新读取诊断，而非返回 init 时缓存的快照。
+     * 这让 License 剩余天数能在轮询协程更新缓存后反映到 UI。
+     */
+    fun diagnostics(): SdkDiagnostics = runCatching {
+        engine.diagnostics().copy(initialized = state == State.READY)
+    }.getOrElse {
+        lastDiagnostics
+    }
 
     private fun refreshDiagnostics(initialized: Boolean = state == State.READY) {
         lastDiagnostics = runCatching {
@@ -173,11 +180,11 @@ class FacePhysBridge(
     companion object {
         const val UNKNOWN_VERSION = "—"
 
-        /** 生产入口。 */
-        fun create(context: Context): FacePhysBridge {
+        /** 生产入口：从容器拿引擎（RealRppgEngine 或 StubRppgEngine）。 */
+        fun create(context: Context, engine: RppgEngine): FacePhysBridge {
             val app = context.applicationContext
             val bridge = FacePhysBridge(
-                engine = StubRppgEngine(),
+                engine = engine,
                 assetExists = { name -> assetPresent(app, name) },
                 postToUi = { block -> MainPoster.post(block) },
             )
@@ -214,6 +221,9 @@ internal fun mapFailure(code: InitErrorCode): SensorFailure = when (code) {
     InitErrorCode.NO_NETWORK -> SensorFailure.NO_NETWORK
     InitErrorCode.QUOTA_EXCEEDED -> SensorFailure.QUOTA_EXCEEDED
     InitErrorCode.MODEL_MISSING -> SensorFailure.MODEL_MISSING
+    InitErrorCode.SESSION_TIMEOUT -> SensorFailure.SDK_UNAVAILABLE
+    InitErrorCode.BANNED -> SensorFailure.SDK_UNAVAILABLE
+    InitErrorCode.CLOCK_ROLLBACK -> SensorFailure.SDK_UNAVAILABLE
     InitErrorCode.OK, InitErrorCode.UNKNOWN -> SensorFailure.SDK_UNAVAILABLE
 }
 

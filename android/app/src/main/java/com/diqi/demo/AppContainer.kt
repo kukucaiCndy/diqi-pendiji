@@ -13,11 +13,17 @@ import com.diqi.demo.data.prefs.DataStoreSnapshotStore
 import com.diqi.demo.data.prefs.SnapshotStore
 import com.diqi.demo.data.repo.SessionRepository
 import com.diqi.demo.sensor.DemoSensor
+import com.diqi.demo.sensor.FacePhysBridge
 import com.diqi.demo.sensor.NullSensor
+import com.diqi.demo.sensor.RppgSensor
 import com.diqi.demo.sensor.SensorAdapter
 import com.diqi.demo.domain.training.TrainingEngine
 import com.diqi.demo.domain.training.TrainingParams
+import com.diqi.demo.training.RppgSensorAssembly
 import com.diqi.demo.training.TrainingSessionCoordinator
+import com.facephys.rppg.RealRppgEngine
+import com.facephys.rppg.RppgEngine
+import com.facephys.rppg.StubRppgEngine
 import com.diqi.demo.training.TrainingDeps
 import com.diqi.demo.ui.screens.settings.SettingsDeps
 import com.diqi.demo.work.ReminderWorker
@@ -74,17 +80,50 @@ class AppContainer(private val app: Application) : TrainingDeps, SettingsDeps {
     override val snapshots: SnapshotStore by lazy { DataStoreSnapshotStore(app) }
 
     /**
-     * 按当前设置选择感知数据源。
+     * 按当前设置选择感知数据源（供 Null/Demo 路径）。
      *
      * - 演示模式 → [DemoSensor]（产出数值但带 `isSimulated` 标记，必须水印）
      * - 其他 → [NullSensor]（如实"未启用感知"）
      *
-     * 真实 RppgSensor 在 S6 第二部分接入（CameraX + ML Kit + Bridge）。
-     * 刻意先只有这两个实现：**没有摄像头也绝不出假数值**，
-     * 这是 FR-08 与 AC-14 的底线。
+     * 真实路径（[com.diqi.demo.sensor.RppgSensor]）由 [TrainingViewModel] 自行组装：
+     * 它需要 FacePhysBridge + FaceAnalyzer + CameraController 的完整链路，
+     * 不适合在这里的单一工厂方法里构造。三态选择的纯函数见
+     * [com.diqi.demo.sensor.chooseSensor]。
+     *
+     * **没有摄像头也绝不出假数值**，这是 FR-08 与 AC-14 的底线。
      */
     override fun sensorFor(demoMode: Boolean, cameraEnabled: Boolean): SensorAdapter =
         if (demoMode) DemoSensor() else NullSensor()
+
+    /**
+     * rPPG 引擎工厂：BuildConfig.FACEPHYS_APP_KEY 非空 → RealRppgEngine（真实 SDK），
+     * 否则 StubRppgEngine（契约桩，NullSensor/演示路径仍可跑）。
+     *
+     * beta 期 AppKey 通过 BuildConfig 注入（local.properties），控制台「建议服务端下发」，
+     * 正式上线前切换为服务端动态拉取。
+     */
+    fun createRppgEngine(): RppgEngine =
+        if (BuildConfig.FACEPHYS_APP_KEY.isNotBlank()) RealRppgEngine() else StubRppgEngine()
+
+    /**
+     * 创建真实 rPPG 传感器组装（FacePhysBridge + RppgSensor）。
+     *
+     * 无 AppKey 时返回 null —— VM 回退到 NullSensor（无 key 绝不出假数，FR-08/AC-14）。
+     * 真实路径：engine = [createRppgEngine]，bridge = [FacePhysBridge.create]，
+     * sensor = [RppgSensor]（encAsset 与 RealRppgEngine.MODEL_ENC_ASSET 对齐）。
+     */
+    override fun createRppgSensor(): RppgSensorAssembly? {
+        val appKey = BuildConfig.FACEPHYS_APP_KEY
+        if (appKey.isBlank()) return null
+        val engine = createRppgEngine()
+        val bridge = FacePhysBridge.create(app, engine)
+        val sensor = RppgSensor(
+            bridge = bridge,
+            appKey = appKey,
+            encAssetName = "step_mini.tflite.enc",
+        )
+        return RppgSensorAssembly(sensor = sensor, bridge = bridge)
+    }
 
     /**
      * 语音播放器。

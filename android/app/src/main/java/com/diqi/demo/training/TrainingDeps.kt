@@ -6,6 +6,8 @@ import com.diqi.demo.data.prefs.AppSettings
 import com.diqi.demo.data.prefs.SnapshotStore
 import com.diqi.demo.data.repo.SessionDraft
 import com.diqi.demo.domain.training.TrainingParams
+import com.diqi.demo.sensor.FacePhysBridge
+import com.diqi.demo.sensor.RppgSensor
 import com.diqi.demo.sensor.SensorAdapter
 
 /**
@@ -24,7 +26,7 @@ import com.diqi.demo.sensor.SensorAdapter
  * 根因是它直接依赖具体的 `AppContainer`（里面是 Room + DataStore，都要 Android 环境）。
  * 抽成接口后，JVM 单测可以用假实现跑通这些分支 —— 不需要设备，也能进 CI。
  *
- * 刻意保持**窄**：只放 VM 真正用到的 8 个成员，不把整个容器搬过来。
+ * 刻意保持**窄**：只放 VM 真正用到的成员，不把整个容器搬过来。
  */
 interface TrainingDeps {
     val clock: Clock
@@ -36,16 +38,39 @@ interface TrainingDeps {
     suspend fun saveSession(draft: SessionDraft)
 
     /**
-     * 选择感知源。
+     * 选择感知源（供 Null/Demo 路径）。
      *
      * [cameraEnabled] 是用户在训练 Tab 上做的选择：false 表示明确选择"不用摄像头训练"。
-     * 真实实现里它应决定是否启用 FacePhys；当前 SDK 未接入，两者都返回空源，
+     * 真实路径由 VM 通过 [createRppgSensor] 组装，不走这个方法。
      * **不会因为开了摄像头就伪造指标**。
      */
     fun sensorFor(demoMode: Boolean, cameraEnabled: Boolean = false): SensorAdapter
+
+    /**
+     * 创建真实 rPPG 传感器（FacePhysBridge + RppgSensor）。
+     *
+     * 返回 null 表示无法创建真实源（无 AppKey / 无 context），
+     * VM 回退到 NullSensor。
+     *
+     * 真实路径：engine = createRppgEngine()，bridge = FacePhysBridge.create(context, engine)，
+     * sensor = RppgSensor(bridge, appKey, encAsset)。
+     * VM 持有 bridge 以便 FaceAnalyzer 的 onFeed 直接投喂。
+     */
+    fun createRppgSensor(): RppgSensorAssembly? = null
 
     /** 取得（或新建）当前训练会话 */
     fun obtainSession(params: TrainingParams): TrainingSession
 
     fun releaseSession()
 }
+
+/**
+ * 真实 rPPG 传感器组装结果。
+ *
+ * VM 持有 [bridge]（供 FaceAnalyzer onFeed 直接投喂）与 [sensor]（供 snapshot 读取）。
+ */
+data class RppgSensorAssembly(
+    val sensor: RppgSensor,
+    val bridge: FacePhysBridge,
+)
+
