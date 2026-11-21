@@ -175,6 +175,18 @@ object UiTag {
     const val P09_DEMO_MODE_TOGGLE = "p09.demo_mode_toggle"
     const val P09_CLEAR_DATA = "p09.clear_data"
     const val P09_PRIVACY = "p09.privacy"
+    /** 隐私说明**详情页根节点**（区别于设置页「隐私说明」行 P09_PRIVACY） */
+    const val P09_PRIVACY_ROOT = "p09.privacy_root"
+    const val P09_CLEAR_CONFIRM = "p09.clear_confirm"
+    const val P09_CLEAR_CANCEL = "p09.clear_cancel"
+    /** 清除数据二次确认对话框的**容器**（区别于主操作按钮 P09_CLEAR_CONFIRM） */
+    const val P09_CLEAR_DIALOG = "p09.clear_dialog"
+    const val P09_TIME_CONFIRM = "p09.time_confirm"
+    const val P09_TIME_CANCEL = "p09.time_cancel"
+    const val P09_RECALIBRATE = "p09.recalibrate"
+    const val P09_DIAGNOSTICS = "p09.diagnostics"
+    const val P09_VOICE_PREVIEW = "p09.voice_preview"
+    const val P09_PRIVACY_BACK = "p09.privacy_back"
 
     // ── 通用 ──────────────────────────────────────────────────────────────
     const val BOTTOM_BAR = "nav.bottom_bar"

@@ -15,6 +15,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.diqi.demo.MainActivity
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 /**
@@ -88,10 +90,49 @@ class ReminderWorker(
         const val NOTIFICATION_ID = 2001
         private const val WORK_NAME = "herrhythm_daily_reminder"
 
-        /** 开启/更新每日提醒。同一时刻只保留一条（REPLACE）。 */
-        fun schedule(context: Context) {
+        /**
+         * 计算从 [nowMillis] 到下一个 HH:mm 的毫秒数。
+         *
+         * - 今天还没到该时刻 → 今天剩余时间
+         * - 今天已过该时刻 → 明天该时刻
+         * - 恰好等于现在 → 取明天（避免初始延迟为 0 导致立刻触发）
+         *
+         * 纯函数，可直接单测。
+         */
+        fun nextTriggerDelayMillis(
+            nowMillis: Long,
+            hhmm: String,
+            zone: ZoneId = ZoneId.systemDefault(),
+        ): Long {
+            val parts = hhmm.split(":")
+            val hour = parts.getOrNull(0)?.toIntOrNull() ?: 20
+            val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+
+            val now = ZonedDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(nowMillis),
+                zone,
+            )
+            var target = now.withHour(hour).withMinute(minute).withSecond(0).withNano(0)
+
+            // 今天已过或恰好等于现在 → 取明天
+            if (!target.isAfter(now)) {
+                target = target.plusDays(1)
+            }
+
+            return target.toInstant().toEpochMilli() - nowMillis
+        }
+
+        /**
+         * 开启/更新每日提醒，按 [timeHHmm] 计算初始延迟。
+         * 同一时刻只保留一条（REPLACE）。
+         */
+        fun schedule(context: Context, timeHHmm: String) {
+            val initialDelay = nextTriggerDelayMillis(
+                System.currentTimeMillis(),
+                timeHHmm,
+            )
             val request = PeriodicWorkRequestBuilder<ReminderWorker>(1, TimeUnit.DAYS)
-                .setInitialDelay(1, TimeUnit.HOURS)
+                .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,

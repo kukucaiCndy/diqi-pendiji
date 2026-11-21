@@ -152,6 +152,8 @@ fun HerRhythmNavHost(
                 composable(Routes.PROFILE) {
                     com.diqi.demo.ui.screens.settings.SettingsScreen(
                         onOpenDesignSystem = { navController.navigate(Routes.DEV_DESIGN) },
+                        onOpenPrivacy = { navController.navigate(Routes.PRIVACY) },
+                        onOpenCalibrate = { navController.navigate(Routes.CALIBRATE) },
                     )
                 }
 
@@ -235,6 +237,11 @@ fun HerRhythmNavHost(
                 }
                 composable(Routes.LEAK_DIARY) {
                     com.diqi.demo.ui.screens.records.LeakDiaryScreen(
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.PRIVACY) {
+                    com.diqi.demo.ui.screens.settings.PrivacyScreen(
                         onBack = { navController.popBackStack() },
                     )
                 }

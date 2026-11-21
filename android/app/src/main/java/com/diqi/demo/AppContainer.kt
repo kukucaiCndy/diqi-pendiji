@@ -18,6 +18,9 @@ import com.diqi.demo.sensor.SensorAdapter
 import com.diqi.demo.domain.training.TrainingEngine
 import com.diqi.demo.domain.training.TrainingParams
 import com.diqi.demo.training.TrainingSessionCoordinator
+import com.diqi.demo.training.TrainingDeps
+import com.diqi.demo.ui.screens.settings.SettingsDeps
+import com.diqi.demo.work.ReminderWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,7 +55,7 @@ import kotlinx.coroutines.cancel
  * 用 `by lazy` 让它们在真正需要时才初始化。CameraX **绝不能**在这里初始化 ——
  * 它需要 Activity/Lifecycle 上下文。
  */
-class AppContainer(private val app: Application) : com.diqi.demo.training.TrainingDeps {
+class AppContainer(private val app: Application) : TrainingDeps, SettingsDeps {
 
     override val clock: Clock = MonotonicClock
 
@@ -167,4 +170,42 @@ class AppContainer(private val app: Application) : com.diqi.demo.training.Traini
         scope = scope,
         params = params,
     )
+
+    // ── SettingsDeps ───────────────────────────────────────────────────────
+    // currentSettings() 由 TrainingDeps 的 override 已实现，两者签名相同
+
+    override val settingsFlow: kotlinx.coroutines.flow.Flow<com.diqi.demo.data.prefs.AppSettings>
+        get() = settingsStore.settings
+
+    override suspend fun setReminderEnabled(enabled: Boolean) =
+        settingsStore.setReminderEnabled(enabled)
+
+    override suspend fun setReminderTime(hhmm: String) =
+        settingsStore.setReminderTime(hhmm)
+
+    override suspend fun setAudioSpeed(speed: Float) =
+        settingsStore.setAudioSpeed(speed)
+
+    override suspend fun setDemoMode(enabled: Boolean) =
+        settingsStore.setDemoMode(enabled)
+
+    override suspend fun clearBusinessSettings() =
+        settingsStore.clearBusinessSettings()
+
+    override suspend fun clearAllSessions() =
+        sessionRepository.clearAll()
+
+    override suspend fun clearSimulatedSessions() =
+        sessionRepository.clearSimulated()
+
+    override suspend fun clearAllLeakDiary() =
+        leakDiaryRepository.clearAll()
+
+    override fun scheduleReminder(timeHHmm: String) {
+        ReminderWorker.schedule(app, timeHHmm)
+    }
+
+    override fun cancelReminder() {
+        ReminderWorker.cancel(app)
+    }
 }

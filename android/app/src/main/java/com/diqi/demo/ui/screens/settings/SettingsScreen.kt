@@ -30,6 +30,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,35 +47,100 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.diqi.demo.AppContainer
+import com.diqi.demo.audio.VoiceScript
 import com.diqi.demo.ui.UiTag
+import com.diqi.demo.ui.components.HrCenterDialog
 import com.diqi.demo.ui.rememberContainer
 import com.diqi.demo.ui.rememberContainerViewModel
-import com.diqi.demo.work.ReminderWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class SettingsViewModel(private val container: AppContainer) : ViewModel() {
+/**
+ * `SettingsViewModel` 需要的最小依赖面（仿 [com.diqi.demo.training.TrainingDeps]）。
+ *
+ * 抽接口是为了让 JVM 单测可以注入假实现 —— [AppContainer] 内含 Room + DataStore，
+ * 都需要 Android 环境。测试不需要真机也能验证设置页行为。
+ *
+ * 设置操作直接放在接口里，而不是暴露 `AppSettingsStore`：
+ * 后者依赖 Android DataStore，在 JVM 单测里无法实例化。
+ */
+interface SettingsDeps {
+    /** 当前设置快照（suspend，读取一次）*/
+    suspend fun currentSettings(): com.diqi.demo.data.prefs.AppSettings
+
+    /** 设置流（供 init 订阅）*/
+    val settingsFlow: kotlinx.coroutines.flow.Flow<com.diqi.demo.data.prefs.AppSettings>
+
+    val voice: com.diqi.demo.audio.VoiceGuide
+
+    // ── 数据清理操作（不暴露 Repository 具体类，便于 JVM 单测注入假实现）──
+    /** 清除全部训练记录（含演示）*/
+    suspend fun clearAllSessions()
+    /** 仅清除演示训练记录 */
+    suspend fun clearSimulatedSessions()
+    /** 清除全部漏尿日记 */
+    suspend fun clearAllLeakDiary()
+
+    // ── 设置写入操作 ──────────────────────────────────────────────────────
+    suspend fun setReminderEnabled(enabled: Boolean)
+    suspend fun setReminderTime(hhmm: String)
+    suspend fun setAudioSpeed(speed: Float)
+    suspend fun setDemoMode(enabled: Boolean)
+    suspend fun clearBusinessSettings()
+
+    // ── 提醒调度 ──────────────────────────────────────────────────────────
+    /** 开启/重排每日提醒（按 timeHHmm 计算初始延迟）*/
+    fun scheduleReminder(timeHHmm: String)
+
+    /** 取消每日提醒 */
+    fun cancelReminder()
+}
+
+class SettingsViewModel(private val deps: SettingsDeps) : ViewModel() {
 
     private val _cleared = MutableStateFlow(false)
     val cleared: StateFlow<Boolean> = _cleared.asStateFlow()
 
     init {
         viewModelScope.launch {
-            container.settingsStore.settings.collect { }
+            deps.settingsFlow.collect { }
         }
     }
 
     fun setReminder(enabled: Boolean) {
         viewModelScope.launch {
-            container.settingsStore.setReminderEnabled(enabled)
-            if (enabled) ReminderWorker.schedule(container.context) else ReminderWorker.cancel(container.context)
+            deps.setReminderEnabled(enabled)
+            if (enabled) {
+                val time = deps.currentSettings().reminderTime
+                deps.scheduleReminder(time)
+            } else {
+                deps.cancelReminder()
+            }
+        }
+    }
+
+    /**
+     * 设置提醒时间（HH:mm）。
+     * 若提醒已开启则立即重排（cancel + schedule）。
+     */
+    fun setReminderTime(hhmm: String) {
+        viewModelScope.launch {
+            deps.setReminderTime(hhmm)
+            val settings = deps.currentSettings()
+            if (settings.reminderEnabled) {
+                deps.cancelReminder()
+                deps.scheduleReminder(settings.reminderTime)
+            }
         }
     }
 
     fun setAudioSpeed(speed: Float) {
-        viewModelScope.launch { container.settingsStore.setAudioSpeed(speed) }
+        viewModelScope.launch {
+            deps.setAudioSpeed(speed)
+            deps.voice.setSpeed(speed)
+        }
     }
 
     /**
@@ -81,8 +149,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun setDemoMode(enabled: Boolean) {
         viewModelScope.launch {
-            container.settingsStore.setDemoMode(enabled)
-            if (!enabled) container.sessionRepository.clearSimulated()
+            deps.setDemoMode(enabled)
+            if (!enabled) deps.clearSimulatedSessions()
         }
     }
 
@@ -91,9 +159,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun clearData() {
         viewModelScope.launch {
-            container.sessionRepository.clearAll()
-            container.leakDiaryRepository.clearAll()
-            container.settingsStore.clearBusinessSettings()
+            deps.clearAllSessions()
+            deps.clearAllLeakDiary()
+            deps.clearBusinessSettings()
             _cleared.value = true
         }
     }
@@ -112,17 +180,24 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
  * 需求 FR-14 要求「设置页底部、默认关闭、无醒目提示」，因此放在**版本号之上、
  * 视觉弱化**的一行，而不是混进功能分组里。
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     onOpenDesignSystem: (() -> Unit)? = null,
+    onOpenPrivacy: (() -> Unit)? = null,
+    onOpenCalibrate: (() -> Unit)? = null,
 ) {
     val vm = rememberContainerViewModel { SettingsViewModel(it) }
     val cleared by vm.cleared.collectAsState()
-    val container = com.diqi.demo.ui.rememberContainer()
+    val container = rememberContainer()
     val settings by container.settingsStore.settings.collectAsState(
         initial = com.diqi.demo.data.prefs.AppSettings(),
     )
+
+    // 对话框状态
+    var showClearConfirm by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -158,7 +233,17 @@ fun SettingsScreen(
                 },
             )
             ItemRow(icon = { VolumeGlyph(it) }, label = "音量", value = "跟随系统", tag = null, onClick = {})
-            ItemRow(icon = { RotateGlyph(it) }, label = "重复当前提示", chevron = true, tag = null, onClick = {})
+            // 「试听引导语音」：先 setSpeed 再 play 一句固定脚本（Preparation 阶段）
+            ItemRow(
+                icon = { RotateGlyph(it) },
+                label = "试听引导语音",
+                chevron = true,
+                tag = UiTag.P09_VOICE_PREVIEW,
+                onClick = {
+                    container.voice.setSpeed(settings.audioSpeed)
+                    container.voice.play(VoiceScript.PREP)
+                },
+            )
         }
 
         // ── 提醒 ────────────────────────────────────────────────────────
@@ -175,14 +260,26 @@ fun SettingsScreen(
                 label = "提醒时间",
                 value = "每天 ${settings.reminderTime}",
                 tag = UiTag.P09_REMINDER_TIME,
-                onClick = {},
+                onClick = { showTimePicker = true },
             )
         }
 
         // ── 摄像头与校准 ────────────────────────────────────────────────
         Group("摄像头与校准") {
-            ItemRow(icon = { FocusGlyph(it) }, label = "重做校准", chevron = true, tag = null, onClick = {})
-            ItemRow(icon = { ActivityGlyph(it) }, label = "设备诊断", chevron = true, tag = null, onClick = {})
+            ItemRow(
+                icon = { FocusGlyph(it) },
+                label = "重做校准",
+                chevron = true,
+                tag = UiTag.P09_RECALIBRATE,
+                onClick = { onOpenCalibrate?.invoke() },
+            )
+            ItemRow(
+                icon = { ActivityGlyph(it) },
+                label = "设备诊断",
+                chevron = true,
+                tag = UiTag.P09_DIAGNOSTICS,
+                onClick = { onOpenCalibrate?.invoke() },
+            )
         }
 
         // ── 隐私与数据 ──────────────────────────────────────────────────
@@ -192,13 +289,13 @@ fun SettingsScreen(
                 label = "隐私说明",
                 chevron = true,
                 tag = UiTag.P09_PRIVACY,
-                onClick = {},
+                onClick = { onOpenPrivacy?.invoke() },
             )
-            // 危险操作：单独成行、红色，且需要二次确认
+            // 危险操作：单独成行、红色，点先弹二次确认
             ClearDataRow(
                 label = "清除本机数据",
                 tag = UiTag.P09_CLEAR_DATA,
-                onClick = { vm.clearData() },
+                onClick = { showClearConfirm = true },
             )
         }
 
@@ -250,6 +347,37 @@ fun SettingsScreen(
         )
 
         Spacer(Modifier.height(8.dp))
+    }
+
+    // ── 清除数据二次确认（B5）──────────────────────────────────────────
+    if (showClearConfirm) {
+        HrCenterDialog(
+            title = "清除本机数据？",
+            message = "将删除训练记录与漏尿日记；安全筛查与同意记录会保留。",
+            primaryLabel = "清除",
+            onPrimary = {
+                showClearConfirm = false
+                vm.clearData()
+            },
+            secondaryLabel = "取消",
+            onSecondary = { showClearConfirm = false },
+            onDismiss = { showClearConfirm = false },
+            tag = UiTag.P09_CLEAR_DIALOG,
+            primaryTag = UiTag.P09_CLEAR_CONFIRM,
+            secondaryTag = UiTag.P09_CLEAR_CANCEL,
+        )
+    }
+
+    // ── 提醒时间选择（B4）──────────────────────────────────────────────
+    if (showTimePicker) {
+        ReminderTimePickerDialog(
+            initialTime = settings.reminderTime,
+            onConfirm = { hhmm ->
+                showTimePicker = false
+                vm.setReminderTime(hhmm)
+            },
+            onCancel = { showTimePicker = false },
+        )
     }
 }
 
@@ -506,3 +634,56 @@ private val HrSetTrack = Color(0xFFCBD5E1)
 private val HrSetIcon = Color(0xFF475569)
 private val HrSetDanger = Color(0xFFB91C1C)
 private val HrSetFaint = Color(0xFFF1F5F9)
+
+/**
+ * 提醒时间选择器（B4）。
+ *
+ * 用 Material3 [TimePicker]（compose-bom 2024.12.01 内含 material3 ≥1.3），
+ * 外壳复用 [HrCenterDialog] 的居中弹窗风格。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ReminderTimePickerDialog(
+    initialTime: String,
+    onConfirm: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val parts = initialTime.split(":")
+    val initHour = parts.getOrNull(0)?.toIntOrNull() ?: 20
+    val initMinute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+
+    val state = androidx.compose.material3.rememberTimePickerState(
+        initialHour = initHour,
+        initialMinute = initMinute,
+        is24Hour = true,
+    )
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("选择提醒时间", fontWeight = FontWeight.Bold) },
+        text = {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.material3.TimePicker(state = state)
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    val hh = "%02d".format(state.hour)
+                    val mm = "%02d".format(state.minute)
+                    onConfirm("$hh:$mm")
+                },
+                modifier = Modifier.testTag(UiTag.P09_TIME_CONFIRM),
+            ) { Text("确定") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(
+                onClick = onCancel,
+                modifier = Modifier.testTag(UiTag.P09_TIME_CANCEL),
+            ) { Text("取消") }
+        },
+    )
+}

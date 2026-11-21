@@ -45,6 +45,9 @@ object Routes {
     /** 设计系统与语音自检（仅 debug）*/
     const val DEV_DESIGN = "dev/design"
 
+    /** 隐私说明（二级页，从设置进入）*/
+    const val PRIVACY = "settings/privacy"
+
     /** 三个 Tab 的路由集合（决定底栏是否显示）*/
     val TAB_ROUTES = setOf(TRAINING_HOME, RECORDS, PROFILE)
 }

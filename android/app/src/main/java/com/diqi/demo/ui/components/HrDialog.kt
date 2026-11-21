@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,6 +47,8 @@ fun HrCenterDialog(
     secondaryIsDanger: Boolean = true,
     onDismiss: (() -> Unit)? = null,
     tag: String? = null,
+    primaryTag: String? = null,
+    secondaryTag: String? = null,
 ) {
     Dialog(
         onDismissRequest = { onDismiss?.invoke() },
@@ -68,7 +71,7 @@ fun HrCenterDialog(
                     .clip(RoundedCornerShape(20.dp))
                     .background(Color.White)
                     .padding(24.dp)
-                    .let { if (tag != null) it.then(Modifier) else it },
+                    .let { m -> if (tag != null) m.testTag(tag) else m },
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = HrDlgInk)
@@ -80,6 +83,7 @@ fun HrCenterDialog(
                         .height(52.dp)
                         .clip(RoundedCornerShape(26.dp))
                         .background(HrDlgInk)
+                        .let { m -> if (primaryTag != null) m.testTag(primaryTag) else m }
                         .clickable(onClick = onPrimary),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -91,6 +95,7 @@ fun HrCenterDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
+                            .let { m -> if (secondaryTag != null) m.testTag(secondaryTag) else m }
                             .clickable(onClick = onSecondary),
                         contentAlignment = Alignment.Center,
                     ) {
