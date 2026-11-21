@@ -87,6 +87,11 @@ android {
         // adaptive-icon 资源（实测报 resource not found），所以这条告警只能抑制。
         // 其余未处理的只有 GradleDependency（版本是刻意锁定的基线）。
         disable += "ObsoleteSdkInt"
+        // Camera2Interop（Camera2CameraControl / Camera2CameraInfo）在 Java 侧用
+        // @ExperimentalCamera2Interop 标注，而该 lint 检查只认 Java 的
+        // @RequiresOptIn 形态 —— Kotlin 的 @OptIn 满足不了它，调用又已经全部
+        // 包在 runCatching 里安全降级（老设备退回纯 auto），所以这条只能抑制。
+        disable += "UnsafeOptInUsageError"
         warningsAsErrors = false
         abortOnError = true
     }

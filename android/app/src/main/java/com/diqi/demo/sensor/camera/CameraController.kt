@@ -1,8 +1,15 @@
 package com.diqi.demo.sensor.camera
 
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
 import android.util.Log
 import android.view.ViewGroup
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -51,6 +58,12 @@ class CameraController(
      */
     private var previewUseCase: Preview? = null
     private var analysisUseCase: ImageAnalysis? = null
+
+    /**
+     * `bindToLifecycle` 返回的 Camera 实例 —— 人脸优先 3A 要经它拿
+     * `cameraControl`（→ Camera2CameraControl）与 `cameraInfo`（→ Camera2CameraInfo）。
+     */
+    private var camera: Camera? = null
 
     /** 相机不可用的原因（可解释，供 UI 展示 —— FR-03 要求失败原因必须能说清）*/
     var lastError: String? = null
@@ -121,7 +134,7 @@ class CameraController(
         preview: Preview,
         analysis: ImageAnalysis,
     ) {
-        cameraProvider.bindToLifecycle(
+        val boundCamera = cameraProvider.bindToLifecycle(
             lifecycleOwner,
             CameraSelector.DEFAULT_FRONT_CAMERA,
             preview,
@@ -129,12 +142,70 @@ class CameraController(
         )
         previewUseCase = preview
         analysisUseCase = analysis
+        camera = boundCamera
         bound = true
         lastError = null
         Log.d(
             TAG,
             "[camera-trace] bind ok preview=${preview.hashCode()} analysis=${analysis.hashCode()}",
         )
+        // 绑定成功后再开人脸优先测光：此时才有 Camera2CameraControl 可写。
+        enableFaceAeIfSupported(boundCamera)
+    }
+
+    /**
+     * 条件开启**人脸优先自动曝光**（face AE）。
+     *
+     * ## 这是什么、不是什么
+     *
+     * face AE = **人脸优先的自动曝光**：AE/AWB **仍然全自动**，只是让相机 3A
+     * 把人脸当作优先测光区域，从而让「人脸」这一块曝光更准。它**不是锁定** ——
+     * 本方法绝不设置 `AE_LOCK` / `AWB_LOCK`（锁定实验已因压制 SQI 被移除）。
+     *
+     * 用户裁决 2026-11-21：保持 auto 的同时按设备能力条件开启 face AE。
+     *
+     * ## 判定方式
+     *
+     * 读 `STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES`：含 `FULL`(2) 优先 FULL，
+     * 否则 `SIMPLE`(1)；一个都不含即该设备不支持人脸检测 → 保持纯 auto 并如实记日志。
+     * 设备支持与否是**运行时事实**，只能真机判定，故这里不硬编码。
+     */
+    private fun enableFaceAeIfSupported(camera: Camera) {
+        runCatching {
+            val info = Camera2CameraInfo.from(camera.cameraInfo)
+            val modes = info.getCameraCharacteristic(
+                CameraCharacteristics.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES,
+            )
+            val maxFaces = info.getCameraCharacteristic(
+                CameraCharacteristics.STATISTICS_INFO_MAX_FACE_COUNT,
+            )
+            val supported = modes?.toSet() ?: emptySet()
+            val mode = when {
+                supported.contains(CameraMetadata.STATISTICS_FACE_DETECT_MODE_FULL) ->
+                    CameraMetadata.STATISTICS_FACE_DETECT_MODE_FULL
+                supported.contains(CameraMetadata.STATISTICS_FACE_DETECT_MODE_SIMPLE) ->
+                    CameraMetadata.STATISTICS_FACE_DETECT_MODE_SIMPLE
+                else -> null
+            }
+            if (mode == null) {
+                Log.d(
+                    TAG,
+                    "[camera-trace] face AE unsupported (modes=${modes?.contentToString()} maxFaceCount=$maxFaces)",
+                )
+                return@runCatching
+            }
+            val options = CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.STATISTICS_FACE_DETECT_MODE, mode)
+                .build()
+            Camera2CameraControl.from(camera.cameraControl).addCaptureRequestOptions(options)
+            Log.d(
+                TAG,
+                "[camera-trace] face AE enabled mode=$mode modes=${modes?.contentToString()} maxFaceCount=$maxFaces",
+            )
+        }.onFailure {
+            // 老设备/厂商定制可能不支持 Camera2Interop：降级为纯 auto，不影响出数。
+            Log.w(TAG, "[camera-trace] face AE 开启失败，保持纯 auto：${it.message}")
+        }
     }
 
     /**
@@ -147,6 +218,7 @@ class CameraController(
         val useCases = listOfNotNull(previewUseCase, analysisUseCase)
         previewUseCase = null
         analysisUseCase = null
+        camera = null
         if (useCases.isEmpty()) return
         runCatching {
             provider?.unbind(*useCases.toTypedArray())
