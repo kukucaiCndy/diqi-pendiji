@@ -31,6 +31,19 @@ data class SensorSnapshot(
     val faceLostMs: Long = 0L,
     /** 光照是否充足 */
     val lightOk: Boolean = true,
+    /**
+     * **窗口地面真相**：数据源的采集窗口是否已攒够（`bridge.hasEnoughWindow`）。
+     *
+     * 三态语义（[QualityGate.evaluate] 的第 2 步据此判"信号建立中"）：
+     *  · `true`  → 窗口已满，**不再**认 `elapsedSec < 30` 的旧代理，立刻允许出数；
+     *  · `false` → 窗口未满，建立中（哪怕会话已跑过 30 秒）；
+     *  · `null`  → 数据源没有 SDK 窗口这回事（NullSensor / DemoSensor），
+     *    沿用 `elapsedSec < hrReadySec` 的旧代理，行为与首版逐字节一致。
+     *
+     * 为什么需要它：会话 `elapsedSec` 是"这场训练跑了多久"，不是"信号攒了多久"。
+     * 校准页已经攒满窗口时进入训练，会话秒数从 0 起，旧代理会误报"建立中"30 秒。
+     */
+    val windowReady: Boolean? = null,
 ) {
     companion object {
         /** 未启用感知：整块不显示，只留一行（FR-06）*/

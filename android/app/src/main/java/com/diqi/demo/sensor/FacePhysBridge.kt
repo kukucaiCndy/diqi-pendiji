@@ -55,10 +55,24 @@ class FacePhysBridge(
     /**
      * 初始化。
      *
+     * **幂等，但每次调用都一定会回调一次**（契约见 [onResult]）：
+     *
+     * - 已 READY：不再触碰原生层（窗口原封不动），立刻回调 [Result.Success]。
+     *   这条是共享 bridge 的必要条件 —— 校准页攒满窗口后进训练页，训练页的
+     *   `init` 命中 READY 分支，如果这里静默返回，调用方会永远等不到"可以开始"。
+     * - 正在 INITIALIZING：本次请求的回调由首个调用持有，这里不重复回调
+     *   （重复回调会让界面同时收到两次成功/失败）。
+     * - 已 RELEASED：回调失败，不复活。
+     *
      * @param onResult 一定在主线程回调一次（成功或失败）
      */
     fun init(appKey: String, encAssetName: String, onResult: (Result) -> Unit) {
-        if (state == State.INITIALIZING || state == State.READY) return
+        if (state == State.READY) {
+            // 窗口已在（可能是上一个页面攒满的），绝不 reset —— 只回报"可以开始"
+            postToUi { onResult(Result.Success) }
+            return
+        }
+        if (state == State.INITIALIZING) return
         if (state == State.RELEASED) {
             postToUi { onResult(Result.Failure(SensorFailure.SDK_UNAVAILABLE)) }
             return

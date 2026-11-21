@@ -43,6 +43,9 @@ import kotlinx.coroutines.cancel
  *  · [settingsStore] DataStore —— **一个文件只能一个实例**，同名二次
  *    `preferencesDataStore` 会抛 `IllegalStateException`
  *  · [sessionRepository] / [progressRepository] / [leakDiaryRepository]
+ *  · 真实 rPPG 组装（`RppgSensor` + `FacePhysBridge`，见 `sharedRppgAssembly`）——
+ *    **必须共享**：SDK 窗口是引擎内部状态，新建实例等于清空窗口，
+ *    校准攒满 30s 后进入训练页又要重等（问题 2 的根因）
  *  · 后续：`SensorCoordinator`（**必须** app-scoped，否则锁屏时 Activity 销毁
  *    会连带释放 SDK 窗口，AC-05「锁屏 30s 返回指标恢复」失败 —— 决策 D12）、
  *    `VoiceGuide`
@@ -106,24 +109,61 @@ class AppContainer(private val app: Application) : TrainingDeps, SettingsDeps {
         if (BuildConfig.FACEPHYS_APP_KEY.isNotBlank()) RealRppgEngine() else StubRppgEngine()
 
     /**
-     * 创建真实 rPPG 传感器组装（FacePhysBridge + RppgSensor）。
+     * **application-scoped 的真实 rPPG 组装**（engine + bridge + sensor，进程内唯一）。
+     *
+     * ## 为什么必须在容器里共享（而不是每次训练新建）
+     *
+     * 首版每次 [createRppgSensor] 都新建 engine + bridge，于是**校准页攒满的 SDK
+     * 窗口在进入训练页时被丢掉**，训练页从 0 帧重新建立，用户要再干等约 30 秒 ——
+     * 窗口是 SDK 引擎内部状态，跟实例同生共死，新建实例等于清空窗口。
+     *
+     * 共享之后：校准页（[com.diqi.demo.ui.screens.calibrate.CalibrateViewModel]）
+     * 与训练页（[com.diqi.demo.ui.screens.training.TrainingViewModel]）投喂同一个
+     * bridge，窗口自然延续 —— 校准攒满 → 训练第二秒就有真实读数。
+     *
+     * ## 生命周期
+     *
+     * 与进程同生共死，**页面不得释放它**（`RppgSensor.release()` 以
+     * `ownsBridge=false` 构造，只停投喂；`FacePhysBridge.init` 已幂等，
+     * 训练 start 不会重置窗口）。SDK 自身 5 分钟上限（-16）由
+     * [RealRppgEngine] 的自动重连兜底，不靠页面重建开新实例。
+     *
+     * 无 AppKey 时为 null —— VM 回退到 NullSensor（无 key 绝不出假数，FR-08/AC-14）。
+     */
+    private val sharedRppgAssembly: RppgSensorAssembly? by lazy {
+        val appKey = BuildConfig.FACEPHYS_APP_KEY
+        if (appKey.isBlank()) {
+            null
+        } else {
+            val engine = createRppgEngine()
+            val bridge = FacePhysBridge.create(app, engine)
+            RppgSensorAssembly(
+                sensor = RppgSensor(
+                    bridge = bridge,
+                    appKey = appKey,
+                    encAssetName = "step_mini.tflite.enc",
+                    // 容器持有 bridge 生命周期，sensor.release() 不得连带释放引擎
+                    ownsBridge = false,
+                ),
+                bridge = bridge,
+            )
+        }
+    }
+
+    /**
+     * 容器级共享 bridge（仅在有 AppKey 时为非 null）。
+     *
+     * 校准页用它攒窗口，训练页用同一个继续 —— 这是「免再等 30s」的全部机制。
+     * 无 AppKey 时校准页自建桩 bridge（StubRppgEngine 无真实窗口，行为与旧版一致）。
+     */
+    val sharedBridge: FacePhysBridge? get() = sharedRppgAssembly?.bridge
+
+    /**
+     * 真实 rPPG 传感器组装。**返回容器级共享实例**，不再每次新建。
      *
      * 无 AppKey 时返回 null —— VM 回退到 NullSensor（无 key 绝不出假数，FR-08/AC-14）。
-     * 真实路径：engine = [createRppgEngine]，bridge = [FacePhysBridge.create]，
-     * sensor = [RppgSensor]（encAsset 与 RealRppgEngine.MODEL_ENC_ASSET 对齐）。
      */
-    override fun createRppgSensor(): RppgSensorAssembly? {
-        val appKey = BuildConfig.FACEPHYS_APP_KEY
-        if (appKey.isBlank()) return null
-        val engine = createRppgEngine()
-        val bridge = FacePhysBridge.create(app, engine)
-        val sensor = RppgSensor(
-            bridge = bridge,
-            appKey = appKey,
-            encAssetName = "step_mini.tflite.enc",
-        )
-        return RppgSensorAssembly(sensor = sensor, bridge = bridge)
-    }
+    override fun createRppgSensor(): RppgSensorAssembly? = sharedRppgAssembly
 
     /**
      * 语音播放器。

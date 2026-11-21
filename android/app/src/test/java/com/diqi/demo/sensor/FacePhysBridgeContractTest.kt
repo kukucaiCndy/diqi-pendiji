@@ -168,4 +168,22 @@ class FacePhysBridgeContractTest {
         b.reset()
         assertFalse(b.hasEnoughWindow)
     }
+
+    @Test
+    fun `已就绪时再次_init_立刻回调成功且窗口不被重置`() {
+        // 共享 bridge 的关键契约：校准页攒满窗口 → 训练页 start 时再 init 一次
+        val b = ready()
+        repeat(400) { b.feed(roi(), 0.083f) }
+        assertTrue(b.hasEnoughWindow)
+
+        var result: FacePhysBridge.Result? = null
+        b.init("key", "model.enc") { result = it }
+
+        assertEquals(
+            "已 READY 时必须立刻回报成功，否则新页面永远等不到「可以开始」",
+            FacePhysBridge.Result.Success,
+            result,
+        )
+        assertTrue("第二次 init 绝不许清空已有窗口（否则又要重等 30s）", b.hasEnoughWindow)
+    }
 }
