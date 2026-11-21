@@ -48,6 +48,8 @@ import com.diqi.demo.domain.training.TrainingFrame
 import com.diqi.demo.domain.training.TrainingPhase
 import com.diqi.demo.domain.training.TrainingStatus
 import com.diqi.demo.ui.UiTag
+import com.diqi.demo.ui.components.HrBottomSheetDialog
+import com.diqi.demo.ui.components.HrCenterDialog
 import com.diqi.demo.ui.rememberContainerViewModel
 import com.diqi.demo.ui.theme.HrType
 
@@ -262,77 +264,41 @@ fun TrainingScreen(
 
     // ── 弹窗（M03 恢复 / M01 结束确认 / 保存失败）──────────────────────
     meta.pendingRecovery?.let { snap ->
-        AlertDialog(
-            onDismissRequest = { },
-            title = { Text("上次的训练还没做完", style = HrType.titleSmall, color = HrInk) },
-            text = {
-                Text(
-                    // EngineSnapshot 里没有"已完成次数"（只有累计活动时长），
-                    // 所以这里说用时而不是次数 —— 设计稿 M03 原本写的是次数，
-                    // 但我们不能拿时长去折算次数（那是编造数据）。
-                    "你上次练了 ${secText(snap.elapsedActiveMs)}，要继续吗？",
-                    style = HrType.bodyMedium,
-                    color = HrInkSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { vm.continueFromSnapshot() }) {
-                    Text("继续", style = HrType.button, color = HrBrand)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.discardSnapshot() }) {
-                    Text("丢弃", style = HrType.button, color = HrInkSecondary)
-                }
-            },
+        // M03：居中弹窗。主操作=继续，次操作=丢弃（红字）
+        HrCenterDialog(
+            title = "上次练习没有完成",
+            message = "检测到一次未结束的练习。你可以接着上次的进度继续，或者丢弃重新开始。"
+                + "（上次练了 ${secText(snap.elapsedActiveMs)}）",
+            primaryLabel = "继续上次进度",
+            onPrimary = { vm.continueFromSnapshot() },
+            secondaryLabel = "丢弃并重新开始",
+            onSecondary = { vm.discardSnapshot() },
         )
     }
 
     if (meta.showStopConfirm) {
-        AlertDialog(
-            onDismissRequest = { vm.cancelStop() },
-            title = { Text("结束这次训练？", style = HrType.titleSmall, color = HrInk) },
-            text = {
-                Text(
-                    "已完成的 ${vm.completedRepsNow()} 次会保存下来，不会补算没做完的次数。",
-                    style = HrType.bodyMedium,
-                    color = HrInkSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { vm.confirmStop() }) {
-                    Text("结束", style = HrType.button, color = HrBrand)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.cancelStop() }) {
-                    Text("继续练", style = HrType.button, color = HrInkSecondary)
-                }
-            },
+        // M01：底部弹窗。设计稿把「继续练习」做成主按钮、「仍然结束」做成红字次按钮
+        // —— 意图是避免用户误结束。
+        HrBottomSheetDialog(
+            title = "要结束今天的练习吗？",
+            message = "已练完 ${vm.completedRepsNow()} 次，提前结束不会补全剩下的次数。",
+            primaryLabel = "继续练习",
+            onPrimary = { vm.cancelStop() },
+            secondaryLabel = "仍然结束",
+            onSecondary = { vm.confirmStop() },
+            onDismiss = { vm.cancelStop() },
         )
     }
 
     if (meta.saveFailed) {
-        AlertDialog(
-            onDismissRequest = { vm.abandonOnSaveFailure() },
-            title = { Text("这次记录没保存成功", style = HrType.titleSmall, color = HrInk) },
-            text = {
-                Text(
-                    "可能是存储空间满了。可以再试一次，或者先不保存。",
-                    style = HrType.bodyMedium,
-                    color = HrInkSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { vm.retrySave() }) {
-                    Text("再试一次", style = HrType.button, color = HrBrand)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.abandonOnSaveFailure() }) {
-                    Text("先不保存", style = HrType.button, color = HrInkSecondary)
-                }
-            },
+        HrCenterDialog(
+            title = "这次记录没保存成功",
+            message = "可能是存储空间满了。可以再试一次，或者先不保存。",
+            primaryLabel = "再试一次",
+            onPrimary = { vm.retrySave() },
+            secondaryLabel = "先不保存",
+            onSecondary = { vm.abandonOnSaveFailure() },
+            onDismiss = { vm.abandonOnSaveFailure() },
         )
     }
 }
