@@ -1,5 +1,6 @@
 package com.diqi.demo.ui.screens.calibrate
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.diqi.demo.AppContainer
@@ -7,9 +8,9 @@ import com.diqi.demo.BuildConfig
 import com.diqi.demo.sensor.FacePhysBridge
 import com.diqi.demo.sensor.SensorFailure
 import com.diqi.demo.sensor.camera.FaceFrame
+import com.diqi.demo.training.RppgSensorAssembly
 import com.facephys.rppg.FrameResult
 import com.facephys.rppg.MetricsRead
-import com.facephys.rppg.RppgEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -139,9 +140,27 @@ fun nextCalibrationTick(
  */
 class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
 
-    private val rppgEngine: RppgEngine = container.createRppgEngine()
+    /**
+     * **共享组装**（有 AppKey 时非 null）。
+     *
+     * 校准页与训练页用**同一个** FacePhysBridge —— 校准攒满的 SDK 窗口
+     * 才不会被进训练页时丢掉（问题 2 的机制核心）。
+     */
+    private val sharedAssembly: RppgSensorAssembly? = container.createRppgSensor()
 
-    private val bridge: FacePhysBridge = FacePhysBridge.create(container.context, rppgEngine)
+    /** 共享 bridge；无 AppKey 时为 null（下面回退自建桩 bridge）。 */
+    private val sharedBridge: FacePhysBridge? = sharedAssembly?.bridge
+
+    /**
+     * 是否由本页**自建并拥有** bridge 生命周期。
+     *
+     * 无 AppKey 时走 StubRppgEngine 的桩 bridge（与首版行为一致：本页自建、
+     * 本页释放）。桩引擎没有真实窗口，`hasEnoughWindow` 恒 false，共享与否不影响行为。
+     */
+    private val ownsBridge: Boolean = sharedBridge == null
+
+    private val bridge: FacePhysBridge =
+        sharedBridge ?: FacePhysBridge.create(container.context, container.createRppgEngine())
 
     private val _state = MutableStateFlow(CalibrateUiState())
     val state: StateFlow<CalibrateUiState> = _state.asStateFlow()
@@ -279,13 +298,23 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
                     // 刷新诊断：轮询协程更新了 licenseDaysLeftCache，但 bridge.lastDiagnostics
                     // 只在 init 时设过一次。这里每秒回读，让 License 剩余从「—」变成真实天数。
                     val diag = bridge.diagnostics()
+                    val sqi = (read as? MetricsRead.Ok)?.metrics?.sqi
                     _state.value = state.copy(
                         signalSec = tick.sec,
                         signalProgress = (tick.sec.toFloat() / HR_READY_SEC).coerceIn(0f, 1f),
                         hint = decideHint(hintFrameOf(state), tick.ready),
                         readReady = tick.ready,
-                        sqi = (read as? MetricsRead.Ok)?.metrics?.sqi,
+                        sqi = sqi,
                         licenseDaysLeft = diag.licenseDaysLeft ?: state.licenseDaysLeft,
+                    )
+                    // 1Hz 标定日志（真机调门限用）：同一秒上对齐「距离(faceRatio)」与「质量(SQI)」。
+                    // 抓法：`adb logcat -c && adb logcat -s CalibTrace`
+                    Log.d(
+                        "CalibTrace",
+                        "faceFound=${state.faceFound} faceRatio=${"%.3f".format(state.faceRatio)}" +
+                            " sqi=$sqi hint=${state.hint} sec=${tick.sec}" +
+                            " readReady=${tick.ready} window=${bridge.hasEnoughWindow}" +
+                            " initOk=${state.initOk}",
                     )
                 }
                 delay(1_000)
@@ -313,14 +342,40 @@ class CalibrateViewModel(private val container: AppContainer) : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
-        bridge.release()
+        // **共享 bridge 一律不释放**：它的生命周期归 AppContainer（进程级）。
+        // 这里一 release，SDK 引擎窗口就被清空 —— 用户刚攒满的 30 秒白等，
+        // 进训练页又要从零重攒（问题 2 的症状）。
+        // 只有本页自建的桩 bridge（无 AppKey 的旧路径）才由本页释放，保持原行为。
+        if (ownsBridge) bridge.release()
         analyzer.release()
     }
 
     companion object {
-        /** 需求 §5.2 FR-03：人脸占画面 20%–60% 为合适 */
-        const val MIN_FACE_RATIO = 0.20f
-        const val MAX_FACE_RATIO = 0.60f
+        /**
+         * 人脸占画面比例的合格区间（**真机标定值，不是设计稿初值**）。
+         *
+         * 2026-11-21 真机实测（FY23175108A5，真实 SDK rppg-sdk-1.5.0，
+         * 由远及近再及远缓慢移动，1Hz 采样 147 点，见 `docs/evidence/sdk11-distance.png`）：
+         *
+         * | faceRatio 带 | 样本 | SQI 均值 |
+         * |---|---|---|
+         * | 0.10–0.15 | 37 | 0.226 |
+         * | 0.15–0.20 | 76 | 0.237 |
+         * | 0.20–0.25 | 14 | 0.223 |
+         * | 0.25–0.30 | 8  | 0.295 |
+         * | 0.35–0.40 | 10 | **0.366**（最佳）|
+         *
+         * 结论：SQI 随脸占比单调上升，**≤0.25 的均值全都低于 0.30 的显示下限**
+         * （也就是说那个距离上系统只能标「信号弱」），最佳带落在 0.35–0.40。
+         * 所以下限从设计稿初值的 0.20 收紧到 **0.30**（最佳带下沿再留一点余量），
+         * 上限从 0.60 收到 **0.50** —— 实测样本最高只到 0.40，没有"贴太近反而更差"
+         * 的证据，0.50 是"别把脸糊满屏幕（框会裁掉额头下巴）"的护栏，不是实测拐点。
+         *
+         * 两个值只影响**校准页的引导文案**（请靠近/请往后），不影响质量门控
+         * —— 门控只看窗口与 SQI（QualityGate）。
+         */
+        const val MIN_FACE_RATIO = 0.30f
+        const val MAX_FACE_RATIO = 0.50f
         /** 亮度门限（0–255），低于此判"光线有点暗" */
         const val MIN_BRIGHTNESS = 60
         /** 心率可用窗口（§5.4）*/

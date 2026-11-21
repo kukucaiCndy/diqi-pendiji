@@ -73,7 +73,8 @@ import com.diqi.demo.ui.rememberContainerViewModel
  * ## 数值来源
  *
  * 全部取自 `docs/DESIGN-SPEC.md` 的 `P03-c`：视频区 h430 `#1B2A38`、
- * 人脸框 232×288 r120 `#5EEAD4`、相机角标 132×30 r15 `#0F1A24B3`、
+ * 人脸框 200×248 r104 `#5EEAD4`（原设计稿 232×288 r120，按真机距离标定收窄，
+ * 见 [CalibrateViewModel.MIN_FACE_RATIO] 的实测表）、相机角标 132×30 r15 `#0F1A24B3`、
  * 镜像标 86×30、状态字 15/700 `#5EEAD4`、
  * 下区 padding22 gap16：主提示 28/700、辅助 15/400 `#64748B`、
  * 诊断卡 r12 p[14,16] `#F8FAFC` + `#E2E8F0`（头 12/700 `#475569`，行 11sp）、
@@ -148,14 +149,19 @@ fun CalibrateScreen(
                         .fillMaxSize()
                         .testTag(UiTag.P03_PREVIEW),
                 )
-                // 人脸框 232×288 r120 —— 三态色：建立中白 / 未对准琥珀 / 就绪薄荷
+                // 人脸框 200×248 r104 —— 三态色：建立中白 / 未对准琥珀 / 就绪薄荷
+                //
+                // 尺寸按真机标定改过（原设计稿 232×288 r120）：实测「脸与旧框同宽」
+                // 只对应 faceRatio ≈0.21，而 SQI 最佳带在 0.35–0.40、合格带 ≥0.30。
+                // 于是框缩到 ≈0.86 倍，让"脸和框差不多大"正好落在合格带下沿，
+                // 用户不需要比框大很多就能进入好信号区（标定表见 CalibrateViewModel）。
                 Box(
                     Modifier
                         .align(Alignment.Center)
-                        .size(width = 232.dp, height = 288.dp)
+                        .size(width = 200.dp, height = 248.dp)
                         .border(
                             BorderStroke(2.dp, faceBoxColor(phase)),
-                            RoundedCornerShape(120.dp),
+                            RoundedCornerShape(104.dp),
                         )
                         .testTag(UiTag.P03_FACE_BOX),
                 )
@@ -306,8 +312,8 @@ fun CalibrateScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         TipLine("面向光源，不要背对窗")
-                        TipLine("脸占画面 20%–60% 最合适")
-                        TipLine("手机立在桌上，与脸齐高")
+                        TipLine("脸要和外框差不多大（占画面 30%–50%）")
+                        TipLine("手机立在桌上，与脸齐高，别贴太近")
                     }
                 }
 
@@ -562,10 +568,10 @@ private fun noFaceHeadline(hint: CalibrationHint): String = when (hint) {
     else -> "请把脸放进框内"
 }
 
-/** 未对准系的原因行（常驻主按钮下方）。 */
+/** 未对准系的原因行（常驻主按钮下方）。真机标定后补上「太远/太近」的量化说法。 */
 private fun noFaceReason(hint: CalibrationHint): String = when (hint) {
-    CalibrationHint.FACE_TOO_SMALL -> "脸离得有点远，请靠近镜头"
-    CalibrationHint.FACE_TOO_LARGE -> "脸离得有点近，请往后一点"
+    CalibrationHint.FACE_TOO_SMALL -> "脸离得太远了，请靠近镜头（太远时信号弱、数值只能标「信号弱」）"
+    CalibrationHint.FACE_TOO_LARGE -> "脸离得太近了，请往后一点（太近会裁掉额头和下巴）"
     CalibrationHint.LOW_LIGHT -> "光线不足，请面向光源"
     else -> "未检测到人脸，请先对准镜头"
 }
