@@ -15,9 +15,10 @@ import java.time.format.DateTimeFormatter
 
 /** 首页感知状态行三态（FR-02）。 */
 enum class SensorStatusRow(val label: String, val actionLabel: String) {
-    OFF("未开启感知", "开启"),
-    READY("感知已就绪", "查看"),
-    WEAK("信号弱", "调整"),
+    // 文案取自设计稿 P02-a「训练前需开启摄像头 / 去开启」与 P02-b「摄像头已就绪」
+    OFF("训练前需开启摄像头", "去开启"),
+    READY("摄像头已就绪", ""),
+    WEAK("信号弱，可调整", "调整"),
 }
 
 data class HomeUiState(
@@ -32,6 +33,13 @@ data class HomeUiState(
     val weekSessionCount: Int = 0,
     val weekTotalSec: Long = 0,
     val lastTrainingText: String = "还没有训练记录",
+    /**
+     * P02-b 已完成卡的数据行，对应设计稿「8 次　·　3 分 12 秒　·　平均心率 71」。
+     *
+     * 心率只在信号覆盖率 ≥60% 时才有值（数据层已把不达标的 avgHr 置空），
+     * 所以这里拼接是安全的 —— 不达标时这一段自然消失（FR-09）。
+     */
+    val todaySummaryText: String = "",
     val sensor: SensorStatusRow = SensorStatusRow.OFF,
     /** FR-01 分流：需要常驻就医提示 */
     val clinicalNoticeRequired: Boolean = false,
@@ -92,6 +100,19 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 weekSessionCount = week.sessionCount,
                 weekTotalSec = week.totalSec,
                 lastTrainingText = lastTrainingText(last?.startedAt),
+                // P02-b 数据行：8 次　·　3 分 12 秒[　·　平均心率 71]
+                // 心率段只在覆盖率达标时存在（数据层已把不达标的 avgHr 置空），
+                // 所以这里的拼接天然满足 FR-09，不会出现"覆盖率不足还显示心率"。
+                todaySummaryText = if (trainedToday && last != null) {
+                    buildString {
+                        append("${last.completedReps} 次")
+                        append("　·　")
+                        append(formatMinutes(last.durationSec))
+                        last.avgHr?.let { append("　·　平均心率 ${it.toInt()}") }
+                    }
+                } else {
+                    ""
+                },
                 // 感知状态只能由真实的 SensorCoordinator 驱动（S6）。
                 // 首版把"演示模式"映射成"信号弱"是**编造状态**，与本文件
                 // 头声明的"绝不造假"自相矛盾，已删除。

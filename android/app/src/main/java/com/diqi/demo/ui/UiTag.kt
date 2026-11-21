@@ -43,6 +43,12 @@ object UiTag {
     const val P02_LAST_TRAINING = "p02.last_training"
     const val P02_CLINICAL_BANNER = "p02.clinical_banner"
 
+    /** 本周打卡右上角「N / 7 天」（设计稿 P02-a 行头右侧） */
+    const val P02_WEEK_COUNT = "p02.week_count"
+
+    /** P02-b 已完成卡的数据行（8 次 · 3 分 12 秒 · 平均心率） */
+    const val P02_DONE_SUMMARY = "p02.done_summary"
+
     // ── 摄像头校准 P03 ────────────────────────────────────────────────────
     const val P03_ROOT = "p03.root"
     const val P03_PREVIEW = "p03.preview"
